@@ -1,0 +1,76 @@
+## =============================================================================
+## 몽글픽 백엔드 애플리케이션 설정
+## =============================================================================
+## Spring Boot 4.0.3 + JPA + MySQL 8.0
+## DDL은 init.sql로 관리하므로 ddl-auto=validate 사용 (JPA가 DDL 생성/변경하지 않음)
+## =============================================================================
+
+spring:
+  application:
+    name: monglepick-backend
+
+  ## -------------------------------------------------------------------------
+  ## MySQL 데이터소스 설정
+  ## -------------------------------------------------------------------------
+  ## 환경변수로 오버라이드 가능:
+  ##   SPRING_DATASOURCE_URL, SPRING_DATASOURCE_USERNAME, SPRING_DATASOURCE_PASSWORD
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/monglepick?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=UTF-8}
+    username: ${SPRING_DATASOURCE_USERNAME:monglepick}
+    password: ${SPRING_DATASOURCE_PASSWORD:monglepick_password}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+    ## HikariCP 커넥션 풀 설정
+    hikari:
+      maximum-pool-size: 20          # 최대 커넥션 수
+      minimum-idle: 5                # 최소 유휴 커넥션 수
+      idle-timeout: 300000           # 유휴 커넥션 타임아웃 (5분)
+      connection-timeout: 30000      # 커넥션 획득 대기 타임아웃 (30초)
+      max-lifetime: 1800000          # 커넥션 최대 수명 (30분)
+
+  ## -------------------------------------------------------------------------
+  ## JPA / Hibernate 설정
+  ## -------------------------------------------------------------------------
+  jpa:
+    ## DDL은 init.sql로 직접 관리 → validate로 엔티티-테이블 매핑만 검증
+    hibernate:
+      ddl-auto: validate
+
+    ## Hibernate 속성
+    properties:
+      hibernate:
+        ## MySQL 8.0 방언 (자동 감지되지만 명시적으로 지정)
+        dialect: org.hibernate.dialect.MySQLDialect
+        ## SQL 포맷팅 (개발 시 가독성 향상)
+        format_sql: true
+        ## 배치 INSERT/UPDATE 최적화
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+    ## 콘솔에 실행 SQL 출력 여부 (운영 환경에서는 false 권장)
+    show-sql: false
+    ## Open Session In View 비활성화 (성능 + LazyInitializationException 명시적 처리)
+    open-in-view: false
+
+## -------------------------------------------------------------------------
+## 서버 설정
+## -------------------------------------------------------------------------
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+## -------------------------------------------------------------------------
+## 로깅 설정
+## -------------------------------------------------------------------------
+logging:
+  level:
+    root: INFO
+    com.monglepick: DEBUG
+    ## SQL 디버깅 시 아래 주석 해제
+    # org.hibernate.SQL: DEBUG
+    # org.hibernate.orm.jdbc.bind: TRACE

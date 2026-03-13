@@ -1,0 +1,88 @@
+# =========================================
+# 몽글픽 Spring Boot 백엔드 CI/CD 워크플로우
+# =========================================
+# PR/push → Gradle 테스트 + JAR 빌드 (GitHub 호스팅 러너, H2 인메모리 DB)
+# develop push → 스테이징 맥북에서 직접 배포 (Self-hosted 러너)
+#
+# 사전 준비:
+#   스테이징 맥북에 GitHub Actions self-hosted runner 설치 완료
+
+name: CI/CD
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── CI: 테스트 + 빌드 (GitHub 호스팅 러너) ───
+  test:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # 테스트 실행 (H2 인메모리 DB 사용 — src/test/resources/application.yml)
+      - name: Test
+        run: ./gradlew test --no-daemon
+
+      - name: Build JAR
+        run: ./gradlew bootJar --no-daemon -x test
+
+  # ─── CD: 스테이징 배포 (Self-hosted 러너에서 직접 실행) ───
+  deploy:
+    name: Deploy to Staging
+    needs: test
+    runs-on: self-hosted
+    timeout-minutes: 10
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy Backend container
+        run: |
+          set -e
+          echo "========== Backend 배포 시작 =========="
+
+          PROJECT_DIR="${PROJECT_DIR:-/Users/yoonhyungjoo/Documents/monglepick}"
+
+          # checkout된 코드를 프로젝트 디렉토리에 동기화
+          rsync -a --delete --exclude='.gradle' --exclude='build' --exclude='.env' \
+            "$GITHUB_WORKSPACE/" "$PROJECT_DIR/monglepick-backend/"
+
+          cd "$PROJECT_DIR"
+
+          # Backend 컨테이너만 재빌드 + 재시작
+          docker compose -f docker-compose.staging.yml up -d --build --no-deps spring-boot
+
+          # 헬스체크 대기 (Spring Boot는 시작이 느림, 최대 80초)
+          echo ">>> Backend 헬스체크 대기..."
+          for i in 1 2 3 4 5 6 7 8; do
+            if curl -sf "http://localhost:8080/actuator/health" > /dev/null 2>&1; then
+              echo "  ✅ Backend OK"
+              break
+            fi
+            echo "  ⏳ Backend starting... ($i/8)"
+            sleep 10
+          done
+
+          echo "========== ✅ Backend 배포 완료 =========="
