@@ -1,6 +1,5 @@
 package com.monglepick.monglepickbackend.domain.user.entity;
 
-import com.monglepick.monglepickbackend.global.entity.BaseTimeEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -8,117 +7,116 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.OneToOne;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+
 /**
- * 사용자 선호도 엔티티 — user_preferences 테이블 매핑.
+ * 사용자 선호도 엔티티
  *
- * <p>사용자의 영화 취향/선호 정보를 저장한다.
- * 온보딩 과정(이상형 월드컵 등)이나 대화를 통해 수집된 선호 정보를 누적한다.
- * 각 사용자당 하나의 선호도 레코드만 존재한다 (user_id UNIQUE).</p>
+ * <p>MySQL user_preferences 테이블과 매핑됩니다.
+ * 사용자의 영화 선호 장르, 분위기, 시청 맥락 등을 JSON 형태로 저장합니다.</p>
  *
- * <h3>선호 필드 (모두 JSON 배열)</h3>
- * <ul>
- *   <li>{@code preferredGenres} — 선호 장르 (예: ["액션", "SF", "코미디"])</li>
- *   <li>{@code preferredMoods} — 선호 분위기/무드 (예: ["힐링", "감동"])</li>
- *   <li>{@code preferredDirectors} — 선호 감독 (예: ["봉준호", "크리스토퍼 놀란"])</li>
- *   <li>{@code preferredActors} — 선호 배우 (예: ["송강호", "마동석"])</li>
- *   <li>{@code preferredEras} — 선호 시대/연대 (예: ["2020s", "1990s"])</li>
- *   <li>{@code excludedGenres} — 제외할 장르 (예: ["호러", "스릴러"])</li>
- *   <li>{@code preferredPlatforms} — 선호 OTT 플랫폼 (예: ["넷플릭스", "왓챠"])</li>
- *   <li>{@code extraPreferences} — 기타 선호 정보 (JSON 객체)</li>
- * </ul>
+ * <p>AI 추천 에이전트가 이 데이터를 참조하여 개인화된 추천을 생성합니다.
+ * 대화 중 추출된 선호도가 이 테이블에 축적됩니다.</p>
  */
 @Entity
 @Table(name = "user_preferences")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@AllArgsConstructor
-@Builder
-public class UserPreference extends BaseTimeEntity {
+public class UserPreference {
 
-    /** 선호도 레코드 고유 ID (BIGINT AUTO_INCREMENT PK) */
+    /** 선호도 고유 식별자 */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /**
-     * 사용자 엔티티와의 1:1 관계.
-     * user_preferences.user_id → users.user_id FK (ON DELETE CASCADE).
-     * UNIQUE 제약으로 사용자당 하나의 선호도 레코드만 허용된다.
-     */
-    @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false, unique = true)
+    /** 선호도 소유 사용자 (지연 로딩) */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
     /**
-     * 선호 장르 목록 (JSON 배열).
-     * 예: ["액션", "SF", "코미디"]
+     * 선호 장르 목록 (JSON 배열 형태로 저장)
+     * <p>예: ["액션", "SF", "스릴러"]</p>
      */
-    @Column(name = "preferred_genres", columnDefinition = "json")
+    @Column(name = "preferred_genres", columnDefinition = "JSON")
     private String preferredGenres;
 
     /**
-     * 선호 분위기/무드 태그 목록 (JSON 배열).
-     * 예: ["힐링", "감동", "따뜻"]
+     * 선호 분위기/무드 목록 (JSON 배열 형태로 저장)
+     * <p>예: ["긴장감있는", "감동적인", "유쾌한"]</p>
      */
-    @Column(name = "preferred_moods", columnDefinition = "json")
+    @Column(name = "preferred_moods", columnDefinition = "JSON")
     private String preferredMoods;
 
     /**
-     * 선호 감독 목록 (JSON 배열).
-     * 예: ["봉준호", "크리스토퍼 놀란"]
+     * 선호 OTT 플랫폼 목록 (JSON 배열 형태로 저장)
+     * <p>예: ["넷플릭스", "왓챠", "디즈니+"]</p>
      */
-    @Column(name = "preferred_directors", columnDefinition = "json")
-    private String preferredDirectors;
-
-    /**
-     * 선호 배우 목록 (JSON 배열).
-     * 예: ["송강호", "마동석"]
-     */
-    @Column(name = "preferred_actors", columnDefinition = "json")
-    private String preferredActors;
-
-    /**
-     * 선호 시대/연대 목록 (JSON 배열).
-     * 예: ["2020s", "1990s", "classic"]
-     */
-    @Column(name = "preferred_eras", columnDefinition = "json")
-    private String preferredEras;
-
-    /**
-     * 제외할 장르 목록 (JSON 배열).
-     * 이 장르에 해당하는 영화는 추천에서 제외된다.
-     * 예: ["호러", "스릴러"]
-     */
-    @Column(name = "excluded_genres", columnDefinition = "json")
-    private String excludedGenres;
-
-    /**
-     * 선호 OTT 플랫폼 목록 (JSON 배열).
-     * 예: ["넷플릭스", "왓챠", "디즈니플러스"]
-     */
-    @Column(name = "preferred_platforms", columnDefinition = "json")
+    @Column(name = "preferred_platforms", columnDefinition = "JSON")
     private String preferredPlatforms;
 
     /**
-     * 선호 관람등급 (문자열).
-     * 예: "전체관람가", "15세이상관람가"
+     * 비선호/제외 키워드 목록 (JSON 배열 형태로 저장)
+     * <p>예: ["공포", "잔인한", "슬픈결말"]</p>
      */
-    @Column(name = "preferred_certification", length = 50)
-    private String preferredCertification;
+    @Column(name = "excluded_keywords", columnDefinition = "JSON")
+    private String excludedKeywords;
 
-    /**
-     * 기타 선호 정보 (JSON 객체).
-     * 구조화되지 않은 추가 선호 데이터를 자유롭게 저장한다.
-     * 예: {"preferred_length": "short", "subtitles": true}
-     */
-    @Column(name = "extra_preferences", columnDefinition = "json")
-    private String extraPreferences;
+    /** 선호도 생성 시각 */
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    /** 선호도 수정 시각 */
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    @Builder
+    public UserPreference(User user, String preferredGenres, String preferredMoods,
+                          String preferredPlatforms, String excludedKeywords) {
+        this.user = user;
+        this.preferredGenres = preferredGenres;
+        this.preferredMoods = preferredMoods;
+        this.preferredPlatforms = preferredPlatforms;
+        this.excludedKeywords = excludedKeywords;
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    /** 선호 장르 업데이트 */
+    public void updatePreferredGenres(String preferredGenres) {
+        this.preferredGenres = preferredGenres;
+    }
+
+    /** 선호 분위기 업데이트 */
+    public void updatePreferredMoods(String preferredMoods) {
+        this.preferredMoods = preferredMoods;
+    }
+
+    /** 선호 플랫폼 업데이트 */
+    public void updatePreferredPlatforms(String preferredPlatforms) {
+        this.preferredPlatforms = preferredPlatforms;
+    }
+
+    /** 제외 키워드 업데이트 */
+    public void updateExcludedKeywords(String excludedKeywords) {
+        this.excludedKeywords = excludedKeywords;
+    }
 }
