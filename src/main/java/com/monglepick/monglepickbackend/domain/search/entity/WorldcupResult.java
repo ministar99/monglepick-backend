@@ -1,0 +1,125 @@
+package com.monglepick.monglepickbackend.domain.search.entity;
+
+import com.monglepick.monglepickbackend.domain.movie.entity.Movie;
+import com.monglepick.monglepickbackend.domain.user.entity.User;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+
+import java.time.LocalDateTime;
+
+/**
+ * 이상형 월드컵 결과 엔티티 — worldcup_results 테이블 매핑.
+ *
+ * <p>온보딩 과정에서 사용자가 참여하는 "영화 이상형 월드컵"의 결과를 저장한다.
+ * 토너먼트 형식으로 영화를 비교/선택하여 사용자의 취향을 파악하고,
+ * 이를 초기 선호도(UserPreference)로 반영한다.</p>
+ *
+ * <h3>주요 필드</h3>
+ * <ul>
+ *   <li>{@code user} — 참여 사용자 (FK → users.user_id)</li>
+ *   <li>{@code roundSize} — 토너먼트 라운드 수 (기본값: 16강)</li>
+ *   <li>{@code winnerMovie} — 최종 우승 영화 (FK → movies.movie_id, 필수)</li>
+ *   <li>{@code runnerUpMovie} — 준우승 영화 (FK → movies.movie_id, 선택)</li>
+ *   <li>{@code semiFinalMovieIds} — 4강 진출 영화 ID 목록 (TEXT)</li>
+ *   <li>{@code selectionLog} — 각 라운드별 선택 로그 (TEXT)</li>
+ *   <li>{@code genrePreferences} — 선택 결과에서 추출된 장르 선호도 (TEXT)</li>
+ *   <li>{@code onboardingCompleted} — 온보딩 완료 여부 (필수)</li>
+ * </ul>
+ */
+@Entity
+@Table(name = "worldcup_results")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor
+@Builder
+public class WorldcupResult {
+
+    /** 월드컵 결과 고유 ID (BIGINT AUTO_INCREMENT PK) */
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    /**
+     * 월드컵 참여 사용자.
+     * worldcup_results.user_id → users.user_id FK.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    /**
+     * 토너먼트 라운드 수.
+     * 기본값: 16 (16강).
+     * 가능한 값: 8, 16, 32, 64 등
+     */
+    @Column(name = "round_size", nullable = false)
+    @Builder.Default
+    private Integer roundSize = 16;
+
+    /**
+     * 최종 우승 영화 (필수).
+     * worldcup_results.winner_movie_id → movies.movie_id FK.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "winner_movie_id", nullable = false)
+    private Movie winnerMovie;
+
+    /**
+     * 준우승 영화 (선택).
+     * worldcup_results.runner_up_movie_id → movies.movie_id FK.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "runner_up_movie_id")
+    private Movie runnerUpMovie;
+
+    /**
+     * 4강 진출 영화 ID 목록 (TEXT).
+     * 쉼표 구분 문자열 또는 JSON 배열 형태로 저장.
+     * 예: "12345,67890,11111,22222"
+     */
+    @Column(name = "semi_final_movie_ids", columnDefinition = "TEXT")
+    private String semiFinalMovieIds;
+
+    /**
+     * 각 라운드별 선택 로그 (TEXT).
+     * 사용자가 각 매치에서 어떤 영화를 선택했는지 기록.
+     * JSON 또는 구조화된 텍스트 형태.
+     */
+    @Column(name = "selection_log", columnDefinition = "TEXT")
+    private String selectionLog;
+
+    /**
+     * 선택 결과에서 추출된 장르 선호도 (TEXT).
+     * 우승/상위 진출 영화들의 장르를 분석하여 선호 장르를 도출.
+     * 예: "액션:3,SF:2,드라마:1"
+     */
+    @Column(name = "genre_preferences", columnDefinition = "TEXT")
+    private String genrePreferences;
+
+    /**
+     * 온보딩 완료 여부 (필수).
+     * true이면 월드컵 결과가 UserPreference에 반영 완료되었음을 의미.
+     * 기본값: false
+     */
+    @Column(name = "onboarding_completed", nullable = false)
+    @Builder.Default
+    private Boolean onboardingCompleted = false;
+
+    /** 월드컵 결과 생성 시각 */
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private LocalDateTime createdAt;
+}

@@ -1,0 +1,113 @@
+package com.monglepick.monglepickbackend.domain.recommendation.entity;
+
+import com.monglepick.monglepickbackend.domain.movie.entity.Movie;
+import com.monglepick.monglepickbackend.domain.user.entity.User;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+
+import java.time.LocalDateTime;
+
+/**
+ * 추천 로그 엔티티 — recommendation_log 테이블 매핑.
+ *
+ * <p>AI Agent가 사용자에게 추천한 영화의 상세 기록을 저장한다.
+ * 추천 이유, 점수 상세(CF/CBF/Hybrid), 장르/무드 매치율 등을 포함하여
+ * 추천 품질 분석 및 피드백 수집에 활용된다.</p>
+ *
+ * <h3>점수 상세 (ScoreDetail)</h3>
+ * <ul>
+ *   <li>{@code score} — 최종 추천 점수 (필수)</li>
+ *   <li>{@code cfScore} — Collaborative Filtering 점수</li>
+ *   <li>{@code cbfScore} — Content-Based Filtering 점수</li>
+ *   <li>{@code hybridScore} — CF + CBF 하이브리드 합산 점수</li>
+ *   <li>{@code genreMatch} — 장르 일치율 (0.0~1.0)</li>
+ *   <li>{@code moodMatch} — 무드 매치율 (0.0~1.0)</li>
+ *   <li>{@code rankPosition} — 추천 목록 내 순위 (1부터 시작)</li>
+ * </ul>
+ */
+@Entity
+@Table(name = "recommendation_log")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor
+@Builder
+public class RecommendationLog {
+
+    /** 추천 로그 고유 ID (BIGINT AUTO_INCREMENT PK) */
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    /**
+     * 추천 대상 사용자.
+     * recommendation_log.user_id → users.user_id FK.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    /**
+     * 추천이 발생한 채팅 세션 ID (UUID v4).
+     * 같은 세션에서 여러 영화가 추천될 수 있다.
+     */
+    @Column(name = "session_id", length = 36, nullable = false)
+    private String sessionId;
+
+    /**
+     * 추천된 영화.
+     * recommendation_log.movie_id → movies.movie_id FK.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "movie_id", nullable = false)
+    private Movie movie;
+
+    /** 추천 이유 설명 (AI가 생성한 자연어 텍스트, 필수) */
+    @Column(name = "reason", columnDefinition = "TEXT", nullable = false)
+    private String reason;
+
+    /** 최종 추천 점수 (필수) */
+    @Column(name = "score", nullable = false)
+    private Float score;
+
+    /** Collaborative Filtering 점수 (유사 사용자 기반) */
+    @Column(name = "cf_score")
+    private Float cfScore;
+
+    /** Content-Based Filtering 점수 (콘텐츠 유사도 기반) */
+    @Column(name = "cbf_score")
+    private Float cbfScore;
+
+    /** 하이브리드 합산 점수 (CF + CBF 가중 합산) */
+    @Column(name = "hybrid_score")
+    private Float hybridScore;
+
+    /** 장르 일치율 (0.0~1.0, 사용자 선호 장르와의 매치 비율) */
+    @Column(name = "genre_match")
+    private Float genreMatch;
+
+    /** 무드 매치율 (0.0~1.0, 사용자 감정/무드 태그와의 매치 비율) */
+    @Column(name = "mood_match")
+    private Float moodMatch;
+
+    /** 추천 목록 내 순위 (1부터 시작, 상위일수록 작은 값) */
+    @Column(name = "rank_position")
+    private Integer rankPosition;
+
+    /** 추천 발생 시각 */
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private LocalDateTime createdAt;
+}

@@ -1,111 +1,251 @@
 package com.monglepick.monglepickbackend.domain.auth.controller;
 
-import com.monglepick.monglepickbackend.domain.auth.dto.LoginRequest;
-import com.monglepick.monglepickbackend.domain.auth.dto.SignUpRequest;
-import com.monglepick.monglepickbackend.domain.auth.dto.TokenResponse;
-import com.monglepick.monglepickbackend.domain.user.dto.UserResponse;
+import com.monglepick.monglepickbackend.domain.auth.dto.AuthDto.AuthResponse;
+import com.monglepick.monglepickbackend.domain.auth.dto.AuthDto.LoginRequest;
+import com.monglepick.monglepickbackend.domain.auth.dto.AuthDto.OAuthRequest;
+import com.monglepick.monglepickbackend.domain.auth.dto.AuthDto.RefreshRequest;
+import com.monglepick.monglepickbackend.domain.auth.dto.AuthDto.SignupRequest;
+import com.monglepick.monglepickbackend.domain.auth.dto.AuthDto.TokenResponse;
 import com.monglepick.monglepickbackend.domain.auth.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 인증 컨트롤러
+ * 인증 컨트롤러 — 회원가입, 로그인, 소셜 로그인, 토큰 갱신 REST API 엔드포인트.
  *
- * <p>회원가입, 로그인, 토큰 갱신 등 인증 관련 API를 제공합니다.
- * /api/v1/auth/** 경로는 SecurityConfig에서 인증 없이 접근 가능하도록 설정됩니다.</p>
+ * <p>모든 인증 관련 엔드포인트는 {@code /api/v1/auth/**} 경로 하위에 위치하며,
+ * Spring Security에서 {@code permitAll()}로 설정되어 인증 없이 접근 가능하다.</p>
  *
- * <p>API 목록:</p>
- * <ul>
- *   <li>POST /api/v1/auth/signup - 회원가입</li>
- *   <li>POST /api/v1/auth/login - 로그인</li>
- *   <li>POST /api/v1/auth/refresh - 토큰 갱신</li>
- *   <li>GET /api/v1/auth/me - 현재 사용자 정보 조회 (인증 필요)</li>
- * </ul>
+ * <h3>엔드포인트 목록</h3>
+ * <table>
+ *   <tr><th>메서드</th><th>경로</th><th>설명</th></tr>
+ *   <tr><td>POST</td><td>/api/v1/auth/signup</td><td>로컬 회원가입</td></tr>
+ *   <tr><td>POST</td><td>/api/v1/auth/login</td><td>로컬 로그인</td></tr>
+ *   <tr><td>POST</td><td>/api/v1/auth/oauth/{provider}</td><td>소셜 로그인 (google/kakao/naver)</td></tr>
+ *   <tr><td>POST</td><td>/api/v1/auth/refresh</td><td>토큰 갱신</td></tr>
+ *   <tr><td>POST</td><td>/api/v1/auth/logout</td><td>로그아웃 (stateless, 200 반환)</td></tr>
+ * </table>
+ *
+ * <h3>응답 형식</h3>
+ * <p>DTO를 직접 반환한다 (ApiResponse 래퍼 미사용).
+ * {@link com.monglepick.monglepickbackend.domain.reward.controller.PointController}와 동일한 패턴이다.</p>
+ *
+ * @see AuthService
  */
-@Slf4j
 @RestController
 @RequestMapping("/api/v1/auth")
+@Slf4j
 @RequiredArgsConstructor
 public class AuthController {
 
+    /** 인증 서비스 (회원가입/로그인/OAuth/토큰갱신 비즈니스 로직) */
     private final AuthService authService;
 
     /**
-     * 회원가입 API
+     * 로컬 회원가입.
      *
-     * <p>이메일, 비밀번호, 닉네임을 받아 새 사용자를 생성합니다.
-     * 가입 즉시 로그인 처리되어 JWT 토큰이 발급됩니다.</p>
+     * <p>이메일+비밀번호 기반의 자체 회원가입을 처리한다.
+     * 성공 시 201 Created와 함께 JWT 토큰 쌍 + 사용자 정보를 반환한다.</p>
+     *
+     * <h4>요청 예시</h4>
+     * <pre>{@code
+     * POST /api/v1/auth/signup
+     * Content-Type: application/json
+     *
+     * {
+     *   "email": "user@example.com",
+     *   "password": "mypassword123",
+     *   "nickname": "몽글유저"
+     * }
+     * }</pre>
+     *
+     * <h4>성공 응답 (201 Created)</h4>
+     * <pre>{@code
+     * {
+     *   "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+     *   "refreshToken": "eyJhbGciOiJIUzI1NiJ9...",
+     *   "user": {
+     *     "id": "uuid-...",
+     *     "email": "user@example.com",
+     *     "nickname": "몽글유저",
+     *     "profileImage": null,
+     *     "provider": "LOCAL",
+     *     "role": "USER"
+     *   }
+     * }
+     * }</pre>
+     *
+     * <h4>에러 응답</h4>
+     * <ul>
+     *   <li>409 — 이메일 중복: {@code {"code": "A001", "message": "이미 사용 중인 이메일입니다"}}</li>
+     *   <li>409 — 닉네임 중복: {@code {"code": "A002", "message": "이미 사용 중인 닉네임입니다"}}</li>
+     * </ul>
      *
      * @param request 회원가입 요청 (이메일, 비밀번호, 닉네임)
-     * @return 201 Created + JWT 토큰 쌍
+     * @return 201 Created + AuthResponse (토큰 쌍 + 사용자 정보)
      */
     @PostMapping("/signup")
-    public ResponseEntity<TokenResponse> signUp(@Valid @RequestBody SignUpRequest request) {
-        log.info("회원가입 요청 - email: {}", request.email());
-        TokenResponse tokenResponse = authService.signUp(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(tokenResponse);
+    public ResponseEntity<AuthResponse> signup(@Valid @RequestBody SignupRequest request) {
+        log.info("POST /api/v1/auth/signup — email: {}", request.email());
+
+        AuthResponse response = authService.signup(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
     /**
-     * 로그인 API
+     * 로컬 로그인.
      *
-     * <p>이메일과 비밀번호로 인증 후 JWT 토큰을 발급합니다.</p>
+     * <p>이메일+비밀번호 기반의 자체 로그인을 처리한다.
+     * 성공 시 JWT 토큰 쌍 + 사용자 정보를 반환한다.</p>
+     *
+     * <h4>요청 예시</h4>
+     * <pre>{@code
+     * POST /api/v1/auth/login
+     * Content-Type: application/json
+     *
+     * {
+     *   "email": "user@example.com",
+     *   "password": "mypassword123"
+     * }
+     * }</pre>
+     *
+     * <h4>성공 응답 (200 OK)</h4>
+     * <pre>{@code
+     * {
+     *   "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+     *   "refreshToken": "eyJhbGciOiJIUzI1NiJ9...",
+     *   "user": { "id": "uuid-...", "email": "user@example.com", ... }
+     * }
+     * }</pre>
+     *
+     * <h4>에러 응답</h4>
+     * <ul>
+     *   <li>401 — 자격증명 불일치: {@code {"code": "A003", "message": "이메일 또는 비밀번호가 올바르지 않습니다"}}</li>
+     *   <li>409 — 소셜 가입 이메일: {@code {"code": "A007", "message": "해당 이메일로 이미 다른 방식으로 가입되어 있습니다"}}</li>
+     * </ul>
      *
      * @param request 로그인 요청 (이메일, 비밀번호)
-     * @return 200 OK + JWT 토큰 쌍
+     * @return 200 OK + AuthResponse (토큰 쌍 + 사용자 정보)
      */
     @PostMapping("/login")
-    public ResponseEntity<TokenResponse> login(@Valid @RequestBody LoginRequest request) {
-        log.info("로그인 요청 - email: {}", request.email());
-        TokenResponse tokenResponse = authService.login(request);
-        return ResponseEntity.ok(tokenResponse);
+    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
+        log.info("POST /api/v1/auth/login — email: {}", request.email());
+
+        AuthResponse response = authService.login(request);
+        return ResponseEntity.ok(response);
     }
 
     /**
-     * 토큰 갱신 API
+     * 소셜 로그인 (OAuth).
      *
-     * <p>유효한 리프레시 토큰을 Authorization 헤더에 담아 보내면
-     * 새로운 액세스 토큰과 리프레시 토큰을 발급합니다.</p>
+     * <p>Google, Kakao, Naver 소셜 로그인을 처리한다.
+     * 클라이언트가 소셜 제공자로부터 받은 인가 코드를 전달하면,
+     * 백엔드에서 토큰 교환 → 사용자 정보 조회 → JWT 발급을 수행한다.</p>
      *
-     * @param authorization "Bearer {refreshToken}" 형식의 Authorization 헤더
-     * @return 200 OK + 새 JWT 토큰 쌍
+     * <h4>요청 예시</h4>
+     * <pre>{@code
+     * POST /api/v1/auth/oauth/google
+     * Content-Type: application/json
+     *
+     * {
+     *   "code": "4/0AXE...",
+     *   "redirectUri": "http://localhost:5173/oauth/callback"
+     * }
+     * }</pre>
+     *
+     * <h4>성공 응답 (200 OK)</h4>
+     * <pre>{@code
+     * {
+     *   "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+     *   "refreshToken": "eyJhbGciOiJIUzI1NiJ9...",
+     *   "user": { "id": "uuid-...", "provider": "GOOGLE", ... }
+     * }
+     * }</pre>
+     *
+     * <h4>에러 응답</h4>
+     * <ul>
+     *   <li>401 — OAuth 실패: {@code {"code": "A006", "message": "소셜 로그인에 실패했습니다"}}</li>
+     *   <li>409 — 이메일 충돌: {@code {"code": "A007", "message": "해당 이메일로 이미 다른 방식으로 가입되어 있습니다"}}</li>
+     * </ul>
+     *
+     * @param provider 소셜 제공자 이름 (google, kakao, naver)
+     * @param request  소셜 로그인 요청 (인가 코드, 리다이렉트 URI)
+     * @return 200 OK + AuthResponse (토큰 쌍 + 사용자 정보)
+     */
+    @PostMapping("/oauth/{provider}")
+    public ResponseEntity<AuthResponse> oauthLogin(
+            @PathVariable String provider,
+            @Valid @RequestBody OAuthRequest request) {
+        log.info("POST /api/v1/auth/oauth/{} — code: {}...", provider,
+                request.code().length() > 10 ? request.code().substring(0, 10) : request.code());
+
+        AuthResponse response = authService.oauthLogin(provider, request);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 토큰 갱신.
+     *
+     * <p>Refresh Token을 사용하여 새로운 Access Token + Refresh Token 쌍을 발급받는다.
+     * Access Token이 만료되었을 때 클라이언트가 호출한다.</p>
+     *
+     * <h4>요청 예시</h4>
+     * <pre>{@code
+     * POST /api/v1/auth/refresh
+     * Content-Type: application/json
+     *
+     * {
+     *   "refreshToken": "eyJhbGciOiJIUzI1NiJ9..."
+     * }
+     * }</pre>
+     *
+     * <h4>성공 응답 (200 OK)</h4>
+     * <pre>{@code
+     * {
+     *   "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+     *   "refreshToken": "eyJhbGciOiJIUzI1NiJ9..."
+     * }
+     * }</pre>
+     *
+     * <h4>에러 응답</h4>
+     * <ul>
+     *   <li>401 — 유효하지 않은 토큰: {@code {"code": "A004", "message": "유효하지 않은 토큰입니다"}}</li>
+     * </ul>
+     *
+     * @param request 토큰 갱신 요청 (리프레시 토큰)
+     * @return 200 OK + TokenResponse (새 토큰 쌍)
      */
     @PostMapping("/refresh")
-    public ResponseEntity<TokenResponse> refresh(
-            @RequestHeader("Authorization") String authorization) {
+    public ResponseEntity<TokenResponse> refreshToken(@Valid @RequestBody RefreshRequest request) {
+        log.info("POST /api/v1/auth/refresh");
 
-        // "Bearer " 접두사 제거하여 순수 토큰 추출
-        String refreshToken = authorization.replace("Bearer ", "");
-        log.info("토큰 갱신 요청");
-
-        TokenResponse tokenResponse = authService.refreshToken(refreshToken);
-        return ResponseEntity.ok(tokenResponse);
+        TokenResponse response = authService.refreshToken(request);
+        return ResponseEntity.ok(response);
     }
 
     /**
-     * 현재 로그인한 사용자 정보 조회 API
+     * 로그아웃.
      *
-     * <p>JWT 토큰에서 추출한 사용자 ID로 프로필 정보를 반환합니다.
-     * 이 엔드포인트는 인증이 필요합니다.</p>
+     * <p>JWT 기반 stateless 인증이므로 서버 측 상태 변경이 없다.
+     * 클라이언트가 토큰을 폐기(삭제)하면 로그아웃 처리된다.
+     * 이 엔드포인트는 클라이언트의 로그아웃 플로우 호환성을 위해 200 OK를 반환한다.</p>
      *
-     * @param userId JWT에서 추출한 사용자 ID (@AuthenticationPrincipal)
-     * @return 200 OK + 사용자 정보
+     * @return 200 OK (빈 응답 본문)
      */
-    @GetMapping("/me")
-    public ResponseEntity<UserResponse> getCurrentUser(
-            @AuthenticationPrincipal String userId) {
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout() {
+        log.info("POST /api/v1/auth/logout — stateless 로그아웃 처리");
 
-        UserResponse userResponse = authService.getCurrentUser(userId);
-        return ResponseEntity.ok(userResponse);
+        // JWT 기반 stateless 인증이므로 서버 측 별도 처리 불필요
+        // 클라이언트에서 저장된 토큰을 삭제하면 로그아웃 완료
+        return ResponseEntity.ok().build();
     }
 }
