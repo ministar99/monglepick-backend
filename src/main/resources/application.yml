@@ -41,6 +41,9 @@ spring:
       hibernate:
         ## MySQL 8.0 방언 (자동 감지되지만 명시적으로 지정)
         dialect: org.hibernate.dialect.MySQLDialect
+        ## MySQL BIT(1) → Java Boolean 매핑 (TINYINT로 처리)
+        type:
+          preferred_boolean_jdbc_type: INTEGER
         ## SQL 포맷팅 (개발 시 가독성 향상)
         format_sql: true
         ## 배치 INSERT/UPDATE 최적화
@@ -131,6 +134,14 @@ app:
     secret: ${JWT_SECRET:monglepick-dev-jwt-secret-key-must-be-at-least-256-bits-long-for-hs256}
     access-token-expiry: ${JWT_ACCESS_EXPIRY:3600000}
     refresh-token-expiry: ${JWT_REFRESH_EXPIRY:604800000}
+
+  ## -------------------------------------------------------------------------
+  ## 쿠키 보안 설정
+  ## -------------------------------------------------------------------------
+  ## APP_COOKIE_SECURE=true 로 설정 시 HTTPS 전용 쿠키 활성화 (운영 환경 필수)
+  ## 개발 환경(HTTP)에서는 false(기본값) 유지
+  cookie:
+    secure: ${APP_COOKIE_SECURE:false}
 
   ## 등급별 AI 추천 쿼터 (-1 = 무제한)
   quota:
