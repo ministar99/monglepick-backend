@@ -111,7 +111,7 @@ class PointServiceTest {
         return UserPoint.builder()
                 .userPointId(1L)
                 .userId(USER_ID)
-                .pointHave(balance)
+                .balance(balance)
                 .totalEarned(total)
                 .dailyEarned(0)
                 .dailyReset(LocalDate.now())
@@ -520,7 +520,7 @@ class PointServiceTest {
             UserPoint userPoint = UserPoint.builder()
                     .userPointId(1L)
                     .userId(USER_ID)
-                    .pointHave(300)
+                    .balance(300)
                     .totalEarned(300)
                     .userGrade(null)  // null 등급
                     .build();
