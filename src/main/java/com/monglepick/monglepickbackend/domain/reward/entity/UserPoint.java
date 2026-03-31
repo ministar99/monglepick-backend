@@ -35,7 +35,7 @@ import java.time.LocalDate;
  * <h3>주요 필드</h3>
  * <ul>
  *   <li>{@code userId} — 사용자 ID (FK → users.user_id, UNIQUE)</li>
- *   <li>{@code pointHave} — 현재 보유 포인트</li>
+ *   <li>{@code balance} — 현재 보유 포인트</li>
  *   <li>{@code totalEarned} — 누적 획득 포인트</li>
  *   <li>{@code dailyEarned} — 오늘 획득 포인트 (일일 한도 관리용)</li>
  *   <li>{@code dailyReset} — 일일 리셋 기준일 (DATE)</li>
@@ -82,10 +82,11 @@ public class UserPoint extends BaseAuditEntity {
     /**
      * 현재 보유 포인트.
      * 기본값: 0.
+     * 필드명 변경 이력: pointHave → balance (2026-03-31)
      */
-    @Column(name = "point_have")
+    @Column(name = "balance")
     @Builder.Default
-    private Integer pointHave = 0;
+    private Integer balance = 0;
 
     /**
      * 누적 획득 포인트.
@@ -130,7 +131,7 @@ public class UserPoint extends BaseAuditEntity {
     /**
      * 포인트 차감.
      *
-     * <p>잔액(pointHave)에서 요청 금액을 차감한다.
+     * <p>잔액(balance)에서 요청 금액을 차감한다.
      * 서비스 레이어에서 사전 검증 후 호출하므로 여기서는 방어적 검증만 수행한다.
      * 잔액이 부족하면 음수 방지를 위해 예외를 발생시킨다.</p>
      *
@@ -138,19 +139,19 @@ public class UserPoint extends BaseAuditEntity {
      * @throws IllegalArgumentException 잔액 부족 시 (서비스 레이어에서 이미 검증하므로 정상 흐름에서는 발생하지 않음)
      */
     public void deductPoints(int amount) {
-        if (this.pointHave < amount) {
+        if (this.balance < amount) {
             throw new IllegalArgumentException(
-                    "잔액 부족: 보유=" + this.pointHave + ", 필요=" + amount
+                    "잔액 부족: 보유=" + this.balance + ", 필요=" + amount
                             + " (서비스 레이어 사전 검증 누락 가능성 — InsufficientPointException 확인 필요)"
             );
         }
-        this.pointHave -= amount;
+        this.balance -= amount;
     }
 
     /**
      * 포인트 획득.
      *
-     * <p>보유 포인트(pointHave), 누적 획득(totalEarned), 일일 획득(dailyEarned)을 갱신한다.
+     * <p>보유 포인트(balance), 누적 획득(totalEarned), 일일 획득(dailyEarned)을 갱신한다.
      * 날짜가 바뀌었으면 일일 획득량을 먼저 리셋한 뒤 적용한다.</p>
      *
      * @param amount 획득 포인트 (양수)
@@ -158,7 +159,7 @@ public class UserPoint extends BaseAuditEntity {
      */
     public void addPoints(int amount, LocalDate today) {
         resetDailyIfNeeded(today);
-        this.pointHave += amount;
+        this.balance += amount;
         this.totalEarned += amount;
         this.dailyEarned += amount;
     }

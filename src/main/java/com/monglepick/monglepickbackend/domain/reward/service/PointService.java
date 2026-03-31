@@ -137,7 +137,7 @@ public class PointService {
 
         if (userPointOpt.isPresent()) {
             UserPoint userPoint = userPointOpt.get();
-            balance = userPoint.getPointHave();
+            balance = userPoint.getBalance();
             grade = userPoint.getUserGrade() != null ? userPoint.getUserGrade().name() : UserGrade.BRONZE.name();
         } else {
             // 포인트 레코드 미존재: 잔액 0, BRONZE 등급
@@ -277,15 +277,15 @@ public class PointService {
                 });
 
         // 2. 잔액 부족 확인
-        if (userPoint.getPointHave() < amount) {
+        if (userPoint.getBalance() < amount) {
             log.warn("포인트 부족 (차감 실패): userId={}, 보유={}, 필요={}",
-                    userId, userPoint.getPointHave(), amount);
-            throw new InsufficientPointException(userPoint.getPointHave(), amount);
+                    userId, userPoint.getBalance(), amount);
+            throw new InsufficientPointException(userPoint.getBalance(), amount);
         }
 
         // 3. 포인트 차감 (도메인 메서드)
         userPoint.deductPoints(amount);
-        int newBalance = userPoint.getPointHave();
+        int newBalance = userPoint.getBalance();
 
         // 4. 변동 이력 기록: pointChange=-amount, pointType="spend"
         PointsHistory history = PointsHistory.builder()
@@ -324,7 +324,7 @@ public class PointService {
 
         return userPointRepository.findByUserId(userId)
                 .map(userPoint -> new BalanceResponse(
-                        userPoint.getPointHave(),
+                        userPoint.getBalance(),
                         userPoint.getUserGrade() != null ? userPoint.getUserGrade().name() : UserGrade.BRONZE.name(),
                         userPoint.getTotalEarned()
                 ))
@@ -378,7 +378,7 @@ public class PointService {
         // 신규 UserPoint 레코드 구성
         UserPoint userPoint = UserPoint.builder()
                 .userId(userId)
-                .pointHave(freePoints)
+                .balance(freePoints)
                 .totalEarned(freePoints)
                 .dailyEarned(0)
                 .dailyReset(LocalDate.now())
@@ -463,7 +463,7 @@ public class PointService {
 
         // 2. 포인트 추가 (도메인 메서드: 보유/누적/일일 갱신)
         userPoint.addPoints(amount, LocalDate.now());
-        int newBalance = userPoint.getPointHave();
+        int newBalance = userPoint.getBalance();
 
         // 3. 등급 재계산 (누적 포인트 기반, UserGrade enum 사용)
         UserGrade newGrade = UserGrade.fromTotalEarned(userPoint.getTotalEarned());
