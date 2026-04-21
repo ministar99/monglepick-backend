@@ -10,11 +10,14 @@ import com.monglepick.monglepickbackend.domain.roadmap.dto.CourseResponse.Course
 import com.monglepick.monglepickbackend.domain.roadmap.dto.CourseResponse.CourseListResponse;
 import com.monglepick.monglepickbackend.domain.roadmap.dto.CourseResponse.CourseStartResponse;
 import com.monglepick.monglepickbackend.domain.roadmap.dto.CourseResponse.MovieInfo;
+import com.monglepick.monglepickbackend.domain.roadmap.dto.CourseReviewResponse;
 import com.monglepick.monglepickbackend.domain.roadmap.entity.CourseProgressStatus;
 import com.monglepick.monglepickbackend.domain.roadmap.entity.CourseReview;
+import com.monglepick.monglepickbackend.domain.roadmap.entity.CourseVerification;
 import com.monglepick.monglepickbackend.domain.roadmap.entity.RoadmapCourse;
 import com.monglepick.monglepickbackend.domain.roadmap.entity.UserCourseProgress;
 import com.monglepick.monglepickbackend.domain.roadmap.repository.CourseReviewRepository;
+import com.monglepick.monglepickbackend.domain.roadmap.repository.CourseVerificationRepository;
 import com.monglepick.monglepickbackend.domain.roadmap.repository.RoadmapCourseRepository;
 import com.monglepick.monglepickbackend.domain.roadmap.repository.UserCourseProgressRepository;
 import com.monglepick.monglepickbackend.domain.reward.service.RewardService;
@@ -72,6 +75,9 @@ public class RoadmapService {
 
     /** 도장깨기 리뷰 레포지토리 — course_review 테이블 저장/조회 */
     private final CourseReviewRepository courseReviewRepository;
+
+    /** 도장깨기 인증 레포지토리 — course_verification 테이블 저장 */
+    private final CourseVerificationRepository courseVerificationRepository;
 
     /** 리워드 서비스 — 완주 포인트 지급 위임 */
     private final RewardService rewardService;
@@ -329,6 +335,25 @@ public class RoadmapService {
     }
 
     // ────────────────────────────────────────────────────────────────
+    // 시청 리뷰 조회
+    // ────────────────────────────────────────────────────────────────
+
+    /**
+     * 특정 코스+영화에 대해 사용자가 작성한 시청 리뷰를 조회한다.
+     *
+     * @param courseId 코스 슬러그
+     * @param movieId  영화 ID
+     * @param userId   사용자 ID
+     * @return 리뷰 응답 DTO (인증 기록 없으면 verified=false)
+     */
+    public CourseReviewResponse getMovieReview(String courseId, String movieId, String userId) {
+        return courseReviewRepository
+                .findByCourseIdAndMovieIdAndUserId(courseId, movieId, userId)
+                .map(CourseReviewResponse::from)
+                .orElseGet(() -> CourseReviewResponse.notVerified(courseId, movieId));
+    }
+
+    // ────────────────────────────────────────────────────────────────
     // 영화 완료 마킹
     // ────────────────────────────────────────────────────────────────
 
@@ -392,6 +417,23 @@ public class RoadmapService {
         courseReviewRepository.save(newReview);
         log.info("도장깨기 리뷰 저장 완료 — courseId={}, movieId={}, userId={}, hasText={}",
                 courseId, movieId, userId, reviewText != null && !reviewText.isBlank());
+
+        // 리뷰 인증 큐 레코드 생성 — 관리자 AI 운영 탭에서 모니터링/오버라이드 가능하게 함
+        // 기존 인증 레코드가 없을 때만 생성 (재시도 방어)
+        boolean verificationExists = courseVerificationRepository
+                .findByUserIdAndCourseIdAndMovieId(userId, courseId, movieId)
+                .isPresent();
+        if (!verificationExists) {
+            CourseVerification verification = CourseVerification.builder()
+                    .userId(userId)
+                    .courseId(courseId)
+                    .movieId(movieId)
+                    .verificationType("REVIEW")
+                    .build();
+            courseVerificationRepository.save(verification);
+            log.info("도장깨기 리뷰 인증 큐 등록 완료 — courseId={}, movieId={}, userId={}",
+                    courseId, movieId, userId);
+        }
 
         // verifyMovie에 위임 — 진행 레코드 생성/업데이트 + 완주 판정 + 리워드 지급
         return verifyMovie(userId, courseId, totalMovies, rewardPoints);
