@@ -40,12 +40,19 @@ public class SupportDto {
      * <p>목록 조회({@code GET /api/v1/support/faqs})와
      * 단건 조회({@code GET /api/v1/support/faqs/{id}}) 모두 이 record를 사용한다.</p>
      *
-     * @param id             FAQ ID
-     * @param category       카테고리 문자열 (예: "PAYMENT", "ACCOUNT")
-     * @param question       질문 내용
-     * @param answer         답변 내용
-     * @param helpfulCount   "도움됨" 피드백 수
+     * <p>{@code userFeedback} 은 요청자가 로그인 사용자이고 해당 FAQ 에 이미 피드백을
+     * 남겼을 때 "helpful" / "not_helpful" 로 세팅된다. 비로그인이거나 미제출 상태에서는
+     * null 을 반환한다. 프론트엔드는 이 값을 근거로 새로고침 직후에도 이미 피드백을
+     * 남긴 FAQ 는 버튼을 숨기고 감사 메시지를 표시하여 중복 제출 → 409 Conflict 를
+     * 구조적으로 차단한다. (서버가 단일 진실 원본)</p>
+     *
+     * @param id              FAQ ID
+     * @param category        카테고리 문자열 (예: "PAYMENT", "ACCOUNT")
+     * @param question        질문 내용
+     * @param answer          답변 내용
+     * @param helpfulCount    "도움됨" 피드백 수
      * @param notHelpfulCount "도움 안됨" 피드백 수
+     * @param userFeedback    요청자의 기존 피드백 상태 ("helpful" | "not_helpful" | null)
      */
     public record FaqResponse(
             Long id,
@@ -53,22 +60,41 @@ public class SupportDto {
             String question,
             String answer,
             int helpfulCount,
-            int notHelpfulCount
+            int notHelpfulCount,
+            String userFeedback
     ) {
         /**
          * {@link SupportFaq} 엔티티로부터 FaqResponse를 생성하는 정적 팩토리 메서드.
+         *
+         * <p>요청자가 비로그인(혹은 미제출) 인 경우 사용한다 — userFeedback 은 null 이 된다.</p>
          *
          * @param faq FAQ 엔티티
          * @return FaqResponse 인스턴스
          */
         public static FaqResponse from(SupportFaq faq) {
+            return from(faq, null);
+        }
+
+        /**
+         * 요청자의 기존 피드백 상태를 포함하여 FaqResponse 를 생성한다.
+         *
+         * @param faq         FAQ 엔티티
+         * @param userHelpful 요청자의 기존 피드백 — true: 도움됨 / false: 도움 안됨 / null: 미제출
+         * @return FaqResponse 인스턴스
+         */
+        public static FaqResponse from(SupportFaq faq, Boolean userHelpful) {
+            /* null 이면 미제출 — 프론트는 피드백 버튼을 노출 */
+            String userFeedback = userHelpful == null
+                    ? null
+                    : (userHelpful ? "helpful" : "not_helpful");
             return new FaqResponse(
                     faq.getFaqId(),
                     faq.getCategory().name(),      // enum → 문자열 (예: "PAYMENT")
                     faq.getQuestion(),
                     faq.getAnswer(),
                     faq.getHelpfulCount(),
-                    faq.getNotHelpfulCount()
+                    faq.getNotHelpfulCount(),
+                    userFeedback
             );
         }
     }
