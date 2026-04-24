@@ -63,16 +63,25 @@ public class SupportController {
      * <p>category 파라미터가 없으면 전체 FAQ를 최신순으로 반환한다.
      * 비로그인 사용자도 조회할 수 있다.</p>
      *
+     * <p>로그인 사용자가 호출한 경우 {@code @AuthenticationPrincipal} 로 전달된 userId 를
+     * 사용해 각 FAQ 에 대한 요청자의 기존 피드백 상태({@code userFeedback}) 를 함께 반환한다.
+     * 프론트엔드는 이 값으로 "이미 피드백한 FAQ" 의 버튼을 숨겨 새로고침 후의 중복 제출 →
+     * 409 Conflict 를 차단한다. 비로그인 호출에서는 {@code @AuthenticationPrincipal} 이
+     * Spring Security 의 익명 principal("anonymousUser") 문자열 또는 null 을 주입하는데,
+     * 서비스 레이어가 두 경우 모두 미제출로 처리한다.</p>
+     *
      * @param category 필터 카테고리 (선택) — GENERAL, ACCOUNT, CHAT, RECOMMENDATION, COMMUNITY, PAYMENT
+     * @param userId   요청자 사용자 ID (로그인 시 JWT 에서 추출, 비로그인 시 "anonymousUser"/null)
      * @return FAQ 목록 (200 OK)
      */
-    @Operation(summary = "FAQ 목록 조회", description = "카테고리별 또는 전체 FAQ를 조회한다 (비인증)")
+    @Operation(summary = "FAQ 목록 조회", description = "카테고리별 또는 전체 FAQ를 조회한다 (비인증 허용, 로그인 시 본인 피드백 상태 포함)")
     @GetMapping("/faq")
     public ResponseEntity<List<FaqResponse>> getFaqs(
             @Parameter(description = "카테고리 필터 (선택)")
-            @RequestParam(required = false) String category
+            @RequestParam(required = false) String category,
+            @AuthenticationPrincipal String userId
     ) {
-        return ResponseEntity.ok(supportService.getFaqs(category));
+        return ResponseEntity.ok(supportService.getFaqs(category, userId));
     }
 
     /**

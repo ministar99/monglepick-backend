@@ -3,6 +3,8 @@ package com.monglepick.monglepickbackend.domain.support.repository;
 import com.monglepick.monglepickbackend.domain.support.entity.SupportFaqFeedback;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -36,4 +38,16 @@ public interface SupportFaqFeedbackRepository extends JpaRepository<SupportFaqFe
      * @return 기존 피드백이 존재하면 Optional.of(feedback), 없으면 Optional.empty()
      */
     Optional<SupportFaqFeedback> findByFaq_FaqIdAndUserId(Long faqId, String userId);
+
+    /**
+     * 특정 사용자의 여러 FAQ 피드백을 일괄 조회한다.
+     *
+     * <p>GET /api/v1/support/faq 응답에 사용자의 기존 피드백 상태를 포함하기 위한 batch 조회.
+     * FAQ 목록을 먼저 조회한 뒤 해당 id 집합과 userId 로 한 번에 조회하여 N+1 을 피한다.</p>
+     *
+     * @param userId 조회 대상 사용자 ID (비어있지 않아야 함)
+     * @param faqIds FAQ id 집합 (비어있으면 빈 리스트 반환)
+     * @return 사용자 피드백 목록 (없으면 빈 리스트)
+     */
+    List<SupportFaqFeedback> findByUserIdAndFaq_FaqIdIn(String userId, Collection<Long> faqIds);
 }

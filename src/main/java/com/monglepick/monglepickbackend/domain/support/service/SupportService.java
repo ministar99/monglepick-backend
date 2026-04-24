@@ -33,6 +33,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -78,15 +80,34 @@ public class SupportService {
     // ─────────────────────────────────────────────
 
     /**
-     * FAQ 목록을 조회한다.
+     * FAQ 목록을 조회한다 (비인증/비로그인 호출용).
      *
-     * <p>category가 null이면 전체 FAQ를 최신순으로 반환하고,
-     * 값이 있으면 해당 카테고리만 필터링한다.</p>
+     * <p>기본 오버로드 — 요청자 userId 를 알 수 없으므로 userFeedback 은 모두 null 로 반환된다.</p>
      *
      * @param category 필터 카테고리 (null 허용 — 전체 조회)
      * @return FAQ 응답 목록
      */
     public List<FaqResponse> getFaqs(String category) {
+        return getFaqs(category, null);
+    }
+
+    /**
+     * FAQ 목록을 조회하며, 로그인 사용자가 이미 남긴 피드백 상태를 응답에 포함한다.
+     *
+     * <p>category 가 null 이면 전체 FAQ 를 최신순으로 반환하고, 값이 있으면 해당 카테고리만
+     * 필터링한다. userId 가 null/blank/"anonymousUser" 가 아니면 현재 사용자의 기존 피드백을
+     * {@code support_faq_feedback} 에서 batch 로 조회해 각 {@link FaqResponse#userFeedback()}
+     * 에 주입한다 — 새로고침 후에도 프론트가 "이미 피드백한 FAQ" 를 감사 메시지 상태로
+     * 복원해 중복 제출 → 409 Conflict 를 구조적으로 차단한다.</p>
+     *
+     * <p>userId 검증 실패(로그인 아님)의 경우 피드백 조회 자체를 스킵해 DB 부하를 피한다.
+     * 설계서 §15.4 — 비로그인 호출 경로를 성능상 이유로 우대.</p>
+     *
+     * @param category 필터 카테고리 (null 허용)
+     * @param userId   요청자 사용자 ID (null/blank/"anonymousUser" 허용 — 미제출로 처리)
+     * @return FAQ 응답 목록 (userFeedback 필드 포함)
+     */
+    public List<FaqResponse> getFaqs(String category, String userId) {
         List<SupportFaq> faqs;
 
         if (category != null && !category.isBlank()) {
@@ -101,7 +122,46 @@ public class SupportService {
             faqs = faqRepository.findAllByOrderByCreatedAtDesc();
         }
 
-        return faqs.stream().map(FaqResponse::from).toList();
+        /* 요청자 기존 피드백 batch 조회 — userId 가 유효할 때만 수행 */
+        Map<Long, Boolean> feedbackByFaqId = loadUserFeedbackMap(userId, faqs);
+
+        return faqs.stream()
+                .map(faq -> FaqResponse.from(faq, feedbackByFaqId.get(faq.getFaqId())))
+                .toList();
+    }
+
+    /**
+     * 요청자의 FAQ 피드백 상태를 batch 조회해 {faqId → helpful} 맵으로 반환한다.
+     *
+     * <p>userId 가 비어있거나 Spring Security 의 익명 principal("anonymousUser") 이면
+     * DB 호출 없이 빈 맵을 반환해 불필요한 조회를 차단한다.</p>
+     *
+     * @param userId 요청자 사용자 ID
+     * @param faqs   응답 대상 FAQ 목록
+     * @return FAQ id → helpful(true/false) 매핑 (없으면 빈 맵)
+     */
+    private Map<Long, Boolean> loadUserFeedbackMap(String userId, List<SupportFaq> faqs) {
+        if (userId == null || userId.isBlank() || "anonymousUser".equals(userId)) {
+            return Collections.emptyMap();
+        }
+        if (faqs == null || faqs.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        /* FAQ id 집합 추출 */
+        List<Long> faqIds = faqs.stream()
+                .map(SupportFaq::getFaqId)
+                .toList();
+
+        /* 한 번의 IN 쿼리로 해당 사용자의 피드백을 일괄 조회 (N+1 방지) */
+        List<SupportFaqFeedback> feedbacks =
+                faqFeedbackRepository.findByUserIdAndFaq_FaqIdIn(userId, faqIds);
+
+        Map<Long, Boolean> result = new HashMap<>(feedbacks.size());
+        for (SupportFaqFeedback fb : feedbacks) {
+            result.put(fb.getFaq().getFaqId(), fb.isHelpful());
+        }
+        return result;
     }
 
     /**
