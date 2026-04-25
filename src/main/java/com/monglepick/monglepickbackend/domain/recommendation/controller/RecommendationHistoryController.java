@@ -200,4 +200,44 @@ public class RecommendationHistoryController extends BaseController {
 
         return ResponseEntity.ok(result);
     }
+
+    /**
+     * 추천 이력 항목의 "관심없음" 상태를 토글한다 (P2, 2026-04-24).
+     *
+     * <p>현재 dismissed 상태의 반대로 전환한다 (false→true: 관심없음 표시, true→false: 취소).
+     * RecommendationImpact 레코드를 업서트하여 {@code dismissed} 필드를 갱신한다.
+     * dismissed=true 가 되면 Chat Agent context_loader 가 SELECT 후 다음 추천에서
+     * exclude_ids 에 자동 병합 → 같은 영화 재추천 차단.</p>
+     *
+     * @param recommendationLogId 관심없음 토글 대상 추천 로그 ID
+     * @param principal           JWT 인증 정보
+     * @return 토글 후 dismissed 상태 ({@code dismissed: boolean})
+     */
+    @Operation(
+            summary = "추천 이력 관심없음 토글",
+            description = "추천 이력 항목의 관심없음 상태를 토글합니다. " +
+                    "true 로 전환되면 Chat Agent 의 다음 추천에서 해당 영화가 자동 제외됩니다.",
+            security = @SecurityRequirement(name = "bearerAuth")
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "토글 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 필요"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "추천 이력 없음 또는 본인 이력 아님")
+    })
+    @PostMapping("/{recommendationLogId}/dismiss")
+    public ResponseEntity<RecommendationHistoryDto.DismissedToggleResponse> toggleDismissed(
+            @Parameter(description = "관심없음 토글 대상 추천 로그 ID", required = true, example = "42")
+            @PathVariable Long recommendationLogId,
+
+            Principal principal
+    ) {
+        String userId = resolveUserId(principal);
+        log.info("추천 이력 관심없음 토글 요청: recommendationLogId={}, userId={}",
+                recommendationLogId, userId);
+
+        RecommendationHistoryDto.DismissedToggleResponse result =
+                recommendationHistoryService.toggleDismissed(recommendationLogId, userId);
+
+        return ResponseEntity.ok(result);
+    }
 }

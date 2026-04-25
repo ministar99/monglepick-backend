@@ -178,4 +178,20 @@ public class RecommendationHistoryDto {
             boolean watched
 
     ) {}
+
+    /**
+     * 관심없음 토글 응답 DTO (P2, 2026-04-24).
+     *
+     * <p>{@code POST /api/v1/recommendations/{recommendationLogId}/dismiss} 응답에 사용된다.
+     * 토글 후 현재 dismissed 상태를 반환한다. true 인 경우 Chat Agent 의 다음 추천에서
+     * 해당 영화가 exclude_ids 에 자동 포함되어 재추천되지 않는다.</p>
+     *
+     * @param dismissed 토글 후 관심없음 여부 (true: 표시됨 → 다음 추천 제외, false: 취소됨)
+     */
+    public record DismissedToggleResponse(
+
+            /** 토글 후 관심없음 여부 */
+            boolean dismissed
+
+    ) {}
 }

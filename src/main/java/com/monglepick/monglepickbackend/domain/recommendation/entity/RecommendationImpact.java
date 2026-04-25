@@ -138,6 +138,20 @@ public class RecommendationImpact extends BaseAuditEntity {
     @Column(name = "time_to_click_seconds")
     private Integer timeToClickSeconds;
 
+    /**
+     * "관심 없음" 표시 여부 (P2, 2026-04-24).
+     *
+     * <p>사용자가 추천 카드에서 "관심 없음" 액션을 명시적으로 선택했음을 의미한다.
+     * Chat Agent context_loader 가 이 플래그가 true 인 영화를 SELECT 하여
+     * query_builder 의 exclude_ids 에 자동 병합 → 다음 추천에서 해당 영화 제외.</p>
+     *
+     * <p>nullable=true (Builder.Default false) — 기존 레코드는 마이그레이션 없이 false 로
+     * 자연스럽게 처리된다.</p>
+     */
+    @Column(name = "dismissed")
+    @Builder.Default
+    private Boolean dismissed = false;
+
     // ========== 도메인 메서드 ==========
 
     /**
@@ -218,5 +232,26 @@ public class RecommendationImpact extends BaseAuditEntity {
      */
     public void cancelWatched() {
         this.watched = false;
+    }
+
+    /**
+     * "관심 없음" 으로 표시한다 (P2, 2026-04-24).
+     *
+     * <p>dismissed 플래그를 true로 설정한다.
+     * {@code POST /api/v1/recommendations/{id}/dismiss} 토글 API 의 ON 경로에서 호출.
+     * Chat Agent 가 다음 추천 시 exclude_ids 에 자동 포함하여 같은 영화 재추천 차단.</p>
+     */
+    public void markDismissed() {
+        this.dismissed = true;
+    }
+
+    /**
+     * "관심 없음" 표시를 취소한다 (P2, 2026-04-24).
+     *
+     * <p>dismissed 플래그를 false로 되돌린다.
+     * {@code POST /api/v1/recommendations/{id}/dismiss} 토글 API 의 OFF 경로에서 호출.</p>
+     */
+    public void cancelDismissed() {
+        this.dismissed = false;
     }
 }
