@@ -256,6 +256,59 @@ public class RecommendationHistoryService {
         return new RecommendationHistoryDto.WatchedToggleResponse(newWatched);
     }
 
+    /**
+     * 추천 이력에서 특정 영화의 "관심없음" 상태를 토글한다 (P2, 2026-04-24).
+     *
+     * <p>RecommendationImpact 레코드를 업서트하여 {@code dismissed} 필드를 토글한다.
+     * dismissed=true 가 되면 Chat Agent context_loader 가 SELECT 하여
+     * query_builder 의 exclude_ids 에 자동 병합 → 다음 추천에서 해당 영화 제외.</p>
+     *
+     * <ul>
+     *   <li>Impact 없음 → 새 레코드 생성, dismissed=true</li>
+     *   <li>Impact 있고 dismissed=false → dismissed=true (관심없음 표시)</li>
+     *   <li>Impact 있고 dismissed=true → dismissed=false (관심없음 취소)</li>
+     * </ul>
+     *
+     * @param recommendationLogId 토글 대상 추천 로그 ID
+     * @param userId              JWT 에서 추출한 사용자 ID (소유권 검증)
+     * @return 토글 후 관심없음 상태 응답 DTO
+     * @throws BusinessException REC001 — 해당 추천 로그가 없거나 본인 로그가 아닐 때
+     */
+    @Transactional
+    public RecommendationHistoryDto.DismissedToggleResponse toggleDismissed(
+            Long recommendationLogId, String userId) {
+
+        log.info("추천 이력 관심없음 토글: recommendationLogId={}, userId={}", recommendationLogId, userId);
+
+        RecommendationLog recLog = findOwnedLog(recommendationLogId, userId);
+        String movieId = recLog.getMovie().getMovieId();
+
+        RecommendationImpact impact = recommendationImpactRepository
+                .findByUserIdAndMovieIdAndRecommendationLog_RecommendationLogId(
+                        userId, movieId, recommendationLogId)
+                .orElseGet(() -> {
+                    log.debug("Impact 레코드 없음 — 신규 생성: userId={}, movieId={}", userId, movieId);
+                    return recommendationImpactRepository.save(
+                            RecommendationImpact.builder()
+                                    .userId(userId)
+                                    .movieId(movieId)
+                                    .recommendationLog(recLog)
+                                    .build()
+                    );
+                });
+
+        boolean newDismissed = !Boolean.TRUE.equals(impact.getDismissed());
+        if (newDismissed) {
+            impact.markDismissed();
+        } else {
+            impact.cancelDismissed();
+        }
+
+        log.info("추천 이력 관심없음 토글 완료: recommendationLogId={}, dismissed={}",
+                recommendationLogId, newDismissed);
+        return new RecommendationHistoryDto.DismissedToggleResponse(newDismissed);
+    }
+
     // ─────────────────────────────────────────────
     // 내부 헬퍼 메서드
     // ─────────────────────────────────────────────

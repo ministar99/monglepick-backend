@@ -174,6 +174,18 @@ public class RecommendationImpactService {
                 log.info("임팩트 평점부여 기록: impactId={}, userId={}, movieId={}",
                         impact.getImpactId(), userId, movieId);
             }
+            case "dismissed" -> {
+                // P2 (2026-04-24): "관심없음" 표시 — 다음 추천 exclude_ids 자동 포함
+                impact.markDismissed();
+                log.info("임팩트 관심없음 기록: impactId={}, userId={}, movieId={}",
+                        impact.getImpactId(), userId, movieId);
+            }
+            case "undismissed" -> {
+                // P2 (2026-04-24): "관심없음" 취소
+                impact.cancelDismissed();
+                log.info("임팩트 관심없음 취소: impactId={}, userId={}, movieId={}",
+                        impact.getImpactId(), userId, movieId);
+            }
             default -> log.warn("알 수 없는 actionType — 업데이트 건너뜀: actionType={}, userId={}, movieId={}, recLogId={}",
                     actionType, userId, movieId, recLogId);
         }
