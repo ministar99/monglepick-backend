@@ -152,6 +152,10 @@ public class Post extends BaseAuditEntity {
     @Column(name = "pl_snapshot_movie_count")
     private Integer playlistSnapshotMovieCount;
 
+    /** 관리자 수정 사유 (최대 500자, 수정 시 입력 — 없으면 null) */
+    @Column(name = "admin_edit_reason", length = 500)
+    private String adminEditReason;
+
     // ─── PLAYLIST_SHARE 전용 @Transient JOIN 캐리어 (조회용, 비영속) ───
 
     /** 플레이리스트 이름 (스냅샷 우선, 없으면 JOIN playlist 값) */
@@ -254,6 +258,10 @@ public class Post extends BaseAuditEntity {
         this.title = title;
         this.content = content;
         this.category = category;
+    }
+
+    public void updateAdminEditReason(String reason) {
+        this.adminEditReason = reason;
     }
 
     /** 조회수 1 증가 */
