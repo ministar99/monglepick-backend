@@ -172,6 +172,47 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
             @Param("now") LocalDateTime now);
 
     /**
+     * 환불 대상 구독을 찾는다 — 환불된 PaymentOrder 와 매칭되는 UserSubscription 1건 (2026-04-28 신설).
+     *
+     * <p>매칭 키:
+     * <ul>
+     *   <li>같은 user_id</li>
+     *   <li>같은 subscription_plan_id (plan FK)</li>
+     *   <li>status 가 ACTIVE 이거나, CANCELLED 이면서 expiresAt 가 미래</li>
+     * </ul>
+     * 위 조건에 부합하는 가장 최근(createdAt DESC) 1건을 반환한다.</p>
+     *
+     * <h4>왜 이 매칭 전략인가</h4>
+     * <p>{@code payment_orders} 와 {@code user_subscriptions} 사이에 직접 FK 가 없어서
+     * 결제 환불 시 어떤 구독을 만료시킬지 정확히 식별할 수 없다. 대신 "현재 유효한
+     * 같은 plan 구독" 을 환불된 결제와 매핑하는 것이 가장 합리적이다.
+     * 일반적으로 환불은 결제 직후 발생하므로 사용자가 같은 plan 으로 여러 활성 구독을
+     * 가진 경우는 거의 없고(서비스 레이어에서 동일 planCode 중복 결제 차단),
+     * 가장 최근 createdAt 1건만 가져와도 충돌하지 않는다.</p>
+     *
+     * <h4>이미 EXPIRED 인 케이스</h4>
+     * <p>EXPIRED 는 의도적으로 제외한다. 이미 만료 배치로 처리된 구독을 환불 흐름이
+     * 다시 만료시킬 필요는 없으며, EXPIRED 로의 중복 전이는 도메인 메서드
+     * {@link UserSubscription#expire()} 에서 IllegalStateException 으로 차단된다.</p>
+     *
+     * @param userId 사용자 ID
+     * @param subscriptionPlanId 구독 상품 PK
+     * @param now    기준 시각 (보통 LocalDateTime.now())
+     * @return 매칭되는 구독 (없으면 empty)
+     */
+    @Query("SELECT s FROM UserSubscription s JOIN FETCH s.plan " +
+            "WHERE s.userId = :userId " +
+            "AND s.plan.subscriptionPlanId = :subscriptionPlanId " +
+            "AND (s.status = com.monglepick.monglepickbackend.domain.payment.entity.UserSubscription.Status.ACTIVE " +
+            "  OR (s.status = com.monglepick.monglepickbackend.domain.payment.entity.UserSubscription.Status.CANCELLED " +
+            "      AND s.expiresAt > :now)) " +
+            "ORDER BY s.createdAt DESC")
+    List<UserSubscription> findRefundTargetSubscriptions(
+            @Param("userId") String userId,
+            @Param("subscriptionPlanId") Long subscriptionPlanId,
+            @Param("now") LocalDateTime now);
+
+    /**
      * 만료된 구독을 plan과 함께 페이징으로 조회한다 (OOM + N+1 방지).
      *
      * <p>스케줄러에서 배치 처리 시 사용한다. 100건씩 페이징하여

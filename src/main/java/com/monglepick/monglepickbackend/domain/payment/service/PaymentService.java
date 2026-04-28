@@ -854,6 +854,18 @@ public class PaymentService {
         }
         order.refund(refundReason, order.getAmount());
 
+        // ── 8. SUBSCRIPTION 인 경우 매칭되는 UserSubscription 만료 처리 (2026-04-28 추가) ──
+        //
+        // 기존 구현은 SUBSCRIPTION 환불 시 PaymentOrder 만 REFUNDED 로 마킹하고
+        // UserSubscription 은 그대로 ACTIVE/CANCELLED 로 두었다. 그 결과 사용자가 환불을
+        // 받았음에도 만료일까지 구독 혜택(AI 보너스/등급 보장 등)이 유지되어 결제 회수와
+        // 혜택 유지가 양립하는 정합성 결함이 있었다.
+        //
+        // POINT_PACK 의 포인트 회수와 대칭으로, SUBSCRIPTION 도 환불 시 즉시 EXPIRED 로
+        // 전이하고 등급을 활동 기반으로 재계산한다. 이미 EXPIRED 였거나 매칭 구독이
+        // 없으면 경고 로그만 남기고 흐름은 계속한다 (환불 자체를 막지 않는다).
+        expireSubscriptionForRefundedOrder(order);
+
         log.info("환불 처리 완료: orderId={}, userId={}, refundAmount={}원, orderType={}",
                 orderId, userId, order.getAmount(), order.getOrderType());
 
@@ -863,6 +875,83 @@ public class PaymentService {
                 order.getAmount(),
                 "환불이 완료되었습니다. 카드사 정책에 따라 영업일 기준 3~5일 내 취소됩니다."
         );
+    }
+
+    /**
+     * 환불된 SUBSCRIPTION 주문에 대응하는 UserSubscription 을 즉시 만료(EXPIRED)시킨다.
+     *
+     * <p>{@link #refundOrder(String, String, String)} 와 {@link #syncFromPg(String)} 양쪽에서
+     * 동일하게 호출되어, 환불 흐름과 PG 재조회 동기화 흐름 모두에서 구독 혜택이 정상적으로 회수되도록 한다.</p>
+     *
+     * <h3>매칭 전략</h3>
+     * <p>{@code payment_orders} 와 {@code user_subscriptions} 사이에 직접 FK 가 없기 때문에
+     * {@code (userId, plan, status IN ACTIVE/CANCELLED with valid expiresAt)} 의 가장 최근 1건을
+     * 환불 대상 구독으로 간주한다. 동일 plan 으로 동시 다수 활성 구독이 존재하지 않도록 서비스 레이어에서
+     * 보장하므로(같은 planCode 중복 결제 차단 + 플랜 변경 시 기존 ACTIVE → CANCELLED 전이) 이 전략은 안전하다.</p>
+     *
+     * <h3>예외/오류 정책</h3>
+     * <ul>
+     *   <li>POINT_PACK 이거나 plan FK 가 누락된 경우 → 스킵 (로그만)</li>
+     *   <li>매칭 구독이 없는 경우 → 경고 로그 (이미 만료됐거나 데이터 정합성 누락 가능성)</li>
+     *   <li>도메인 메서드 {@code expire()} 가 IllegalStateException 을 던지는 경우 → 이미 EXPIRED 이므로 무시</li>
+     *   <li>등급 재계산 실패 → 에러 로그만, 환불 흐름은 계속 (등급 sync 만 누락)</li>
+     * </ul>
+     *
+     * <p>본 메서드는 {@link #refundOrder} / {@link #syncFromPg} 의 {@code @Transactional} 컨텍스트 안에서만 호출되며,
+     * 등급 재계산은 동일 트랜잭션에 합류한다. 등급 재계산 실패 시 환불을 통째로 롤백하지는 않는다(만료 배치
+     * {@link SubscriptionService#processExpiredSubscriptions()} 와 동일한 정책).</p>
+     *
+     * @param order REFUNDED 로 전이된 직후의 주문 엔티티 (관리 상태)
+     */
+    private void expireSubscriptionForRefundedOrder(PaymentOrder order) {
+        // 1. POINT_PACK 은 처리 대상 아님 — 포인트 회수는 별도 경로에서 이미 처리됨
+        if (order.getOrderType() != PaymentOrder.OrderType.SUBSCRIPTION) {
+            return;
+        }
+
+        // 2. plan FK 누락 — 비정상 데이터지만 환불 자체를 막지 않는다
+        if (order.getPlan() == null) {
+            log.warn("환불된 구독 결제에 plan FK 가 비어있어 UserSubscription 만료를 스킵: orderId={}, userId={}",
+                    order.getPaymentOrderId(), order.getUserId());
+            return;
+        }
+
+        // 3. 매칭 구독 조회 — (userId, planId, ACTIVE OR CANCELLED&유효) 최근 1건
+        Long planId = order.getPlan().getSubscriptionPlanId();
+        List<UserSubscription> matches = userSubscriptionRepository
+                .findRefundTargetSubscriptions(order.getUserId(), planId, LocalDateTime.now());
+
+        if (matches.isEmpty()) {
+            // 이미 EXPIRED 거나(만료 배치가 먼저 처리), CANCELLED&만료지난(만료일 도래) 케이스
+            log.warn("환불 대상 구독을 찾지 못함 — 이미 만료됐거나 데이터 누락: orderId={}, userId={}, planId={}",
+                    order.getPaymentOrderId(), order.getUserId(), planId);
+            return;
+        }
+
+        // 4. 가장 최근 매칭 구독을 EXPIRED 로 전이
+        UserSubscription target = matches.get(0);
+        UserSubscription.Status previousStatus = target.getStatus();
+        try {
+            target.expire();
+            log.info("환불에 따른 구독 만료 처리: orderId={}, userSubscriptionId={}, {} → EXPIRED",
+                    order.getPaymentOrderId(), target.getUserSubscriptionId(), previousStatus);
+        } catch (IllegalStateException e) {
+            // 도메인 메서드는 이미 EXPIRED 인 경우 IllegalStateException 을 던진다 — 정상 흐름
+            log.info("이미 EXPIRED 인 구독 — 만료 전이 스킵: subscriptionId={}",
+                    target.getUserSubscriptionId());
+        }
+
+        // 5. 활동 포인트 기반 등급 재계산 (구독 등급 보장 해제)
+        //    SubscriptionService.processExpiredSubscriptions() 와 동일 패턴.
+        //    구독 결제로 끌어올린 SILVER/PLATINUM 을 활동 등급으로 되돌리지 않으면
+        //    환불 후에도 영구 등급 우회가 가능해진다.
+        try {
+            pointService.recalculateActivityGrade(order.getUserId());
+        } catch (Exception gradeErr) {
+            log.error("환불 후 등급 재계산 실패 — 만료 자체는 정상, 등급 sync 만 누락 (운영팀 수동 조치 필요): "
+                            + "userId={}, subscriptionId={}, error={}",
+                    order.getUserId(), target.getUserSubscriptionId(), gradeErr.getMessage(), gradeErr);
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -969,6 +1058,11 @@ public class PaymentService {
             // DB 상태를 REFUNDED 로 마킹 (Toss 재호출 없음 — getPayment 는 이미 취소 확인만)
             order.refund("[PG 재조회] Toss " + pgStatusValue + " 동기화", order.getAmount());
             log.info("PG 재조회 DB 동기화 완료: orderId={}, newStatus=REFUNDED", orderId);
+
+            // SUBSCRIPTION 인 경우 매칭되는 UserSubscription 도 즉시 EXPIRED 처리 (2026-04-28 추가).
+            // refundOrder() 와 동일한 정합성 보장 — Toss 측 취소가 반영되는 경로에서도
+            // 구독 혜택을 회수해야 환불-혜택 양립을 막을 수 있다.
+            expireSubscriptionForRefundedOrder(order);
 
             return new PgSyncResult(
                     "SYNCED",
