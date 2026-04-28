@@ -32,6 +32,6 @@ INSERT IGNORE INTO reward_policy
      daily_limit, max_count, cooldown_seconds, min_content_length,
      threshold_count, is_active, description)
 VALUES
-    ('OCR_VERIFY', '실관람 OCR 인증', 'ACTIVITY', 500, 'earn',
+    ('OCR_VERIFY', '실관람 OCR 인증', 'ACTIVITY', 100, 'earn',
      NULL, NULL, 0, 0,
      0, true, '영화관 영수증 OCR 실관람 인증 승인 시 지급 (인증 건당 1회, 중복 불가)');
