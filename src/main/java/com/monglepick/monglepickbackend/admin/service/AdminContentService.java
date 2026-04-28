@@ -432,7 +432,7 @@ public class AdminContentService {
         List<PostResponse> content = posts.stream()
                 .map(post -> new PostResponse(
                         post.getPostId(),
-                        post.getUserId(),   // String FK 직접 보관 (§15.4)
+                        post.getUserId(),
                         post.getTitle(),
                         post.getContent(),
                         post.getCategory().name(),
@@ -442,7 +442,8 @@ public class AdminContentService {
                         post.isDeleted(),
                         post.isBlinded(),
                         post.getStatus().name(),
-                        post.getCreatedAt()
+                        post.getCreatedAt(),
+                        post.getAdminEditReason()
                 ))
                 .toList();
 
@@ -477,13 +478,14 @@ public class AdminContentService {
 
         // 도메인 메서드로 변경 후 MyBatis UPDATE 명시 호출 (dirty checking 미지원)
         post.update(newTitle, newContent, newCategory);
+        post.updateAdminEditReason(request.editReason());
         postMapper.update(post);
 
         log.info("[관리자] 게시글 수정 — postId={}, editReason={}", postId, request.editReason());
 
         return new PostResponse(
                 post.getPostId(),
-                post.getUserId(),   // String FK 직접 보관 (JPA/MyBatis 하이브리드 §15.4)
+                post.getUserId(),
                 post.getTitle(),
                 post.getContent(),
                 post.getCategory().name(),
@@ -493,7 +495,8 @@ public class AdminContentService {
                 post.isDeleted(),
                 post.isBlinded(),
                 post.getStatus().name(),
-                post.getCreatedAt()
+                post.getCreatedAt(),
+                post.getAdminEditReason()
         );
     }
 
