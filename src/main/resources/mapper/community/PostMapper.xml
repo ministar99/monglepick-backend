@@ -39,6 +39,7 @@
         <result property="updatedAt" column="updated_at"/>
         <result property="createdBy" column="created_by"/>
         <result property="updatedBy" column="updated_by"/>
+        <result property="adminEditReason" column="admin_edit_reason"/>
     </resultMap>
 
     <!-- 게시글 + JOIN users.nickname 매핑 (상세/목록용) -->
@@ -106,7 +107,7 @@
         p.post_id, p.user_id, p.title, p.content, p.category,
     p.view_count, p.status, p.like_count, p.comment_count,
     p.is_deleted, p.deleted_at, p.is_blinded, p.playlist_id,
-    p.image_urls,
+    p.image_urls, p.admin_edit_reason,
     p.created_at, p.updated_at, p.created_by, p.updated_by
     </sql>
 
@@ -252,13 +253,14 @@
 
     <update id="update">
         UPDATE posts
-        SET title       = #{title},
-            content     = #{content},
-            category    = #{category},
-            status      = #{status},
-            playlist_id = #{playlistId},
-            updated_at  = NOW(),
-            updated_by  = #{updatedBy}
+        SET title             = #{title},
+            content           = #{content},
+            category          = #{category},
+            status            = #{status},
+            playlist_id       = #{playlistId},
+            admin_edit_reason = #{adminEditReason},
+            updated_at        = NOW(),
+            updated_by        = #{updatedBy}
         WHERE post_id = #{postId}
     </update>
 
@@ -328,7 +330,7 @@
     <!-- ═══ Post 관리자 동적 검색 ═══ -->
 
     <sql id="adminPostWhere">
-        WHERE 1 = 1
+        WHERE p.is_deleted = false
         <if test="keyword != null and keyword != ''">
             AND (LOWER(p.title) LIKE LOWER(CONCAT('%', #{keyword}, '%'))
                  OR LOWER(p.content) LIKE LOWER(CONCAT('%', #{keyword}, '%')))

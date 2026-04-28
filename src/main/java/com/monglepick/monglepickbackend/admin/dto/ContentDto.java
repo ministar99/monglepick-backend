@@ -164,7 +164,8 @@ public class ContentDto {
             boolean isDeleted,
             boolean isBlinded,
             String status,
-            LocalDateTime createdAt
+            LocalDateTime createdAt,
+            String adminEditReason
     ) {}
 
     /**
