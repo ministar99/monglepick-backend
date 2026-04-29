@@ -1,7 +1,9 @@
 package com.monglepick.monglepickbackend.domain.auth.controller;
 
+import com.monglepick.monglepickbackend.domain.auth.dto.AuthDto.UserInfo;
 import com.monglepick.monglepickbackend.domain.auth.service.JwtService;
 import com.monglepick.monglepickbackend.domain.auth.service.JwtService.JwtRefreshResult;
+import com.monglepick.monglepickbackend.domain.user.entity.User;
 import com.monglepick.monglepickbackend.global.exception.BusinessException;
 import com.monglepick.monglepickbackend.global.exception.ErrorCode;
 import com.monglepick.monglepickbackend.global.security.CookieUtil;
@@ -53,11 +55,32 @@ public class JwtController {
     /**
      * Access Token 갱신 응답 DTO.
      *
-     * <p>Refresh Token은 쿠키로만 전달하므로 body에는 accessToken만 포함한다.</p>
+     * <p>Refresh Token은 쿠키로만 전달하므로 body에는 accessToken만 포함한다.
+     * 단순 토큰 로테이션({@code POST /jwt/refresh}) 응답에서 사용된다 — 호출 시점에는
+     * 클라이언트가 이미 user 객체를 보유하므로 별도 동봉이 불필요하다.</p>
      *
      * @param accessToken 새로 발급된 Access Token
      */
     public record RefreshResponseBody(String accessToken) {
+    }
+
+    /**
+     * OAuth2 쿠키 → JWT 교환 응답 DTO.
+     *
+     * <p>2026-04-29 회귀 픽스 — 소셜 로그인 직후 호출되는 {@code POST /jwt/exchange}
+     * 응답에서 user 객체가 누락돼 있던 결과 클라이언트 {@code useAuthStore.user.id}
+     * 가 비어 있는 채로 저장됐고, PointPage 등의 데이터 로더가 모두
+     * {@code if (!user?.id) return;} 가드에 막혀 잔액/상점/내 아이템/이력/응모/출석/리워드
+     * 진행 현황이 전혀 표시되지 않던 증상을 해소한다.</p>
+     *
+     * <p>응답 형태를 로컬 로그인({@code LoginSuccessHandler}) 의 {@code LoginResponse}
+     * 와 동일하게 맞춰 클라이언트가 어떤 인증 경로를 거치든 동일한 user 객체를
+     * 받도록 단일 진실 원본을 회복한다.</p>
+     *
+     * @param accessToken 새로 발급된 Access Token
+     * @param user        사용자 요약 정보 (id/email/nickname/profileImage/provider/role)
+     */
+    public record ExchangeResponseBody(String accessToken, UserInfo user) {
     }
 
     /**
@@ -84,7 +107,7 @@ public class JwtController {
     })
     @SecurityRequirement(name = "")
     @PostMapping("/exchange")
-    public ResponseEntity<RefreshResponseBody> exchange(
+    public ResponseEntity<ExchangeResponseBody> exchange(
             HttpServletRequest request,
             HttpServletResponse response
     ) {
@@ -96,14 +119,29 @@ public class JwtController {
             throw new BusinessException(ErrorCode.COOKIE_NOT_FOUND, "refreshToken 쿠키가 없습니다.");
         }
 
-        /* 2. 토큰 로테이션: 기존 토큰 무효화 + 새 토큰 쌍 발급 */
+        /* 2. 토큰 로테이션: 기존 토큰 무효화 + 새 토큰 쌍 발급
+         * 결과에는 user 엔티티도 함께 담겨 오므로 추가 DB 조회 없이 응답에 매핑 가능. */
         JwtRefreshResult result = jwtService.refreshRotate(refreshToken);
 
         /* 3. 새 Refresh Token을 HttpOnly 쿠키로 갱신 */
         cookieUtil.addRefreshTokenCookie(response, result.newRefreshToken());
 
-        /* 4. Access Token만 body로 반환 */
-        return ResponseEntity.ok(new RefreshResponseBody(result.newAccessToken()));
+        /* 4. user 엔티티 → UserInfo DTO 매핑 (LoginSuccessHandler 와 동일 형태)
+         *    필드 순서·이름은 LoginSuccessHandler.UserInfo 및 AuthDto.UserInfo 와 일치.
+         *    클라이언트(useAuthStore) 는 어떤 로그인 경로를 거쳐도 동일한 user 객체를
+         *    저장하게 되어 PointPage 의 user.id 가드가 항상 만족된다. */
+        User user = result.user();
+        UserInfo userInfo = new UserInfo(
+                user.getUserId(),
+                user.getEmail(),
+                user.getNickname(),
+                user.getProfileImage(),
+                user.getProvider().name(),
+                user.getUserRole().name()
+        );
+
+        /* 5. accessToken + user 동봉 응답 */
+        return ResponseEntity.ok(new ExchangeResponseBody(result.newAccessToken(), userInfo));
     }
 
     /**
