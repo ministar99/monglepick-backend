@@ -63,7 +63,7 @@ public class UserVerificationController {
                 String.valueOf(eventId)
         );
 
-        return buildAnalyzeResponse(ocr, request.imageUrl());
+        return buildAnalyzeResponse(ocr, request.imageUrl(), String.valueOf(eventId));
     }
 
     @Operation(
@@ -79,14 +79,14 @@ public class UserVerificationController {
                 request.eventId() != null ? request.eventId() : ""
         );
 
-        return buildAnalyzeResponse(ocr, request.imageUrl());
+        return buildAnalyzeResponse(ocr, request.imageUrl(), request.eventId() != null ? request.eventId() : "");
     }
 
     private ResponseEntity<ApiResponse<UserVerificationDto.AnalyzeResponse>> buildAnalyzeResponse(
-            OcrAnalysisClient.OcrResponse ocr, String imageUrl) {
+            OcrAnalysisClient.OcrResponse ocr, String imageUrl, String eventIdStr) {
         UserVerificationDto.AnalyzeResponse response;
         if (ocr != null && ocr.success()) {
-            double boostedConfidence = applyEventConfidenceBoost(ocr, request.eventId());
+            double boostedConfidence = applyEventConfidenceBoost(ocr, eventIdStr);
             response = new UserVerificationDto.AnalyzeResponse(
                     true,
                     ocr.status(),
