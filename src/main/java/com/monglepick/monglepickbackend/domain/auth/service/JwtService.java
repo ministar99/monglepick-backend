@@ -50,10 +50,16 @@ public class JwtService {
      * newAccessToken은 JSON body로, newRefreshToken은 CookieUtil을 통해 쿠키로 전달한다.
      * 이 record는 JwtService 내부에서만 생성되며, HTTP 응답 body에 직접 직렬화되지 않는다.</p>
      *
+     * <p>2026-04-29 보강 — 소셜 로그인 직후 호출되는 {@code /jwt/exchange} 응답이
+     * accessToken 만 내려보내던 회귀(client {@code user.id} 누락 → PointPage 등 개인화
+     * 데이터 미로드) 를 방지하기 위해 인증 주체({@link User}) 자체를 결과에 동봉한다.
+     * Controller 가 user 정보를 추가 DB 조회 없이 응답 body 에 매핑할 수 있다.</p>
+     *
      * @param newAccessToken  새로 발급된 Access Token
      * @param newRefreshToken 새로 발급된 Refresh Token (쿠키 전달용)
+     * @param user            토큰 주체 사용자 엔티티 (응답 body 의 user 정보 매핑용)
      */
-    public record JwtRefreshResult(String newAccessToken, String newRefreshToken) {
+    public record JwtRefreshResult(String newAccessToken, String newRefreshToken, User user) {
     }
 
     /**
@@ -99,8 +105,11 @@ public class JwtService {
 
         log.info("Refresh Token 갱신 완료 — userId: {}", userId);
 
-        /* newAccessToken: body 반환용, newRefreshToken: 쿠키 설정용 (Controller에서 분리 처리) */
-        return new JwtRefreshResult(newAccessToken, newRefreshToken);
+        /* newAccessToken: body 반환용, newRefreshToken: 쿠키 설정용 (Controller에서 분리 처리)
+         * user: 컨트롤러가 응답 body 에 user 요약 정보를 매핑할 수 있도록 함께 반환.
+         *       소셜 로그인 직후 /jwt/exchange 응답에서 client 가 user.id 를 받지 못해
+         *       PointPage 등 개인화 데이터 로더가 가드에 막히던 회귀(2026-04-29) 차단용. */
+        return new JwtRefreshResult(newAccessToken, newRefreshToken, user);
     }
 
     /**
