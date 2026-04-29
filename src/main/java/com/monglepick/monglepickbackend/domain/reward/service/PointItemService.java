@@ -104,6 +104,12 @@ public class PointItemService {
      * <p>클라이언트의 "포인트 상점" 화면에서 구매 가능한 아이템 전체 목록을 표시할 때 사용된다.
      * 비활성화(is_active=false)된 아이템은 제외되며, 가격 오름차순으로 정렬된다.</p>
      *
+     * <p><b>칭호(TITLE) 카테고리는 사용자 교환 목록에서 제외</b>한다 — 칭호는 등급 달성 시
+     * {@link GradeTitleService} 가 자동 지급하는 트로피 개념이므로 일반 사용자가 포인트로
+     * 구매할 수 있어서는 안 된다. PointItem 자체는 {@code is_active=true} 로 유지해야
+     * 등급 자동 지급 시 {@link PointItemRepository#findFirstByItemNameAndIsActiveTrue}
+     * 가 정상 동작하므로, 노출 차단은 본 서비스 레이어에서 수행한다.</p>
+     *
      * @return 활성 아이템 목록 (가격 오름차순, 없으면 빈 리스트)
      */
     public List<PointItemResponse> getActiveItems() {
@@ -111,23 +117,35 @@ public class PointItemService {
 
         List<PointItemResponse> items = itemRepository.findByIsActiveTrueOrderByItemPriceAsc()
                 .stream()
+                .filter(this::isExchangeable)  // 칭호(TITLE) 등 사용자 교환 불가 카테고리 제외
                 .map(this::toResponse)
                 .toList();
 
-        log.debug("활성 아이템 조회 완료: {}건", items.size());
+        log.debug("활성 아이템 조회 완료: {}건 (칭호 카테고리 제외)", items.size());
         return items;
     }
 
     /**
      * 특정 카테고리의 활성 아이템 목록을 조회한다.
      *
-     * <p>v2: 정규 카테고리는 소문자 5종 ({@link PointItemCategory}).</p>
+     * <p>v2: 정규 카테고리는 소문자 9종 ({@link PointItemCategory}).</p>
      *
-     * @param category 아이템 카테고리 (예: "coupon", "avatar", "badge", "apply", "hint")
-     * @return 해당 카테고리의 활성 아이템 목록
+     * <p><b>칭호(TITLE) 카테고리는 사용자 교환 대상 아님</b> — 클라이언트가 {@code category=title}
+     * 로 직접 호출해도 빈 리스트를 반환한다. 등급 자동 지급은 별도 경로
+     * ({@link GradeTitleService#grantTitleForGrade})로 운영된다.</p>
+     *
+     * @param category 아이템 카테고리 (예: "coupon", "avatar", "badge", "apply", "hint",
+     *                 "frame", "background", "effect")
+     * @return 해당 카테고리의 활성 아이템 목록 (TITLE 이면 빈 리스트)
      */
     public List<PointItemResponse> getItemsByCategory(String category) {
         log.debug("카테고리별 아이템 목록 조회: category={}", category);
+
+        /* 칭호 카테고리는 사용자 교환 화면에서 노출 차단 — 등급 달성 시 자동 지급 전용 */
+        if (PointItemCategory.TITLE.equalsIgnoreCase(category)) {
+            log.debug("칭호 카테고리 직접 조회 차단 — 빈 리스트 반환: category={}", category);
+            return List.of();
+        }
 
         List<PointItemResponse> items = itemRepository
                 .findByItemCategoryAndIsActiveTrueOrderByItemPriceAsc(category)
@@ -137,6 +155,19 @@ public class PointItemService {
 
         log.debug("카테고리별 아이템 조회 완료: category={}, {}건", category, items.size());
         return items;
+    }
+
+    /**
+     * 사용자가 포인트로 교환 가능한 카테고리인지 판정한다.
+     *
+     * <p>현재는 {@link PointItemCategory#TITLE 칭호}만 차단한다. 등급 달성 시 자동 지급되는
+     * 트로피 개념이므로 일반 교환 화면에서 노출되거나 직접 교환되어서는 안 된다.</p>
+     *
+     * @param item 검사 대상 아이템
+     * @return 교환 가능 여부 (true=노출/교환 허용, false=차단)
+     */
+    private boolean isExchangeable(PointItem item) {
+        return !PointItemCategory.TITLE.equalsIgnoreCase(item.getItemCategory());
     }
 
     // ──────────────────────────────────────────────
@@ -173,6 +204,15 @@ public class PointItemService {
                     log.warn("아이템 교환 실패 (아이템 미존재/비활성): userId={}, itemId={}", userId, itemId);
                     return new BusinessException(ErrorCode.ITEM_NOT_FOUND);
                 });
+
+        // 1.5) 카테고리 화이트리스트 — 칭호(TITLE) 는 등급 자동 지급 전용으로 일반 교환 차단.
+        //      목록 API 에서 노출은 막지만, 사용자가 itemId 를 알고 직접 호출해도 막아야 한다.
+        if (!isExchangeable(item)) {
+            log.warn("교환 불가 카테고리 아이템 시도 (칭호 등 자동 지급 전용): userId={}, itemId={}, category={}",
+                    userId, itemId, item.getItemCategory());
+            throw new BusinessException(ErrorCode.ITEM_NOT_ACTIVE,
+                    "이 아이템은 포인트로 교환할 수 없습니다. 칭호는 등급 달성 시 자동으로 지급됩니다.");
+        }
 
         // 2) 지급 방식 사전 검증 — UNSUPPORTED는 조기 차단
         PointItemType itemType = item.getItemType() != null
