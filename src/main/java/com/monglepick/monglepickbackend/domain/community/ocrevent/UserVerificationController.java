@@ -50,6 +50,23 @@ public class UserVerificationController {
      * DB 에 저장하지 않으며 인증 제출과 무관하게 항상 200 을 반환한다.</p>
      */
     @Operation(
+            summary = "OCR 영수증 미리보기 분석 (이벤트 컨텍스트 포함)",
+            description = "이벤트 ID를 경로에 포함해 호출. OCR 신뢰도에 이벤트 영화 제목·기간 일치 여부가 반영된다."
+    )
+    @PostMapping("/{eventId}/analyze")
+    public ResponseEntity<ApiResponse<UserVerificationDto.AnalyzeResponse>> analyzeWithEvent(
+            @PathVariable Long eventId,
+            @Valid @RequestBody UserVerificationDto.AnalyzeRequest request
+    ) {
+        OcrAnalysisClient.OcrResponse ocr = ocrAnalysisClient.analyze(
+                request.imageUrl(),
+                String.valueOf(eventId)
+        );
+
+        return buildAnalyzeResponse(ocr, request.imageUrl(), String.valueOf(eventId));
+    }
+
+    @Operation(
             summary = "OCR 영수증 미리보기 분석",
             description = "이미지 URL 을 전달하면 Python OCR 서버가 영화명/관람일/인원을 추출해 반환한다. DB 저장 없음."
     )
@@ -62,9 +79,14 @@ public class UserVerificationController {
                 request.eventId() != null ? request.eventId() : ""
         );
 
+        return buildAnalyzeResponse(ocr, request.imageUrl(), request.eventId() != null ? request.eventId() : "");
+    }
+
+    private ResponseEntity<ApiResponse<UserVerificationDto.AnalyzeResponse>> buildAnalyzeResponse(
+            OcrAnalysisClient.OcrResponse ocr, String imageUrl, String eventIdStr) {
         UserVerificationDto.AnalyzeResponse response;
         if (ocr != null && ocr.success()) {
-            double boostedConfidence = applyEventConfidenceBoost(ocr, request.eventId());
+            double boostedConfidence = applyEventConfidenceBoost(ocr, eventIdStr);
             response = new UserVerificationDto.AnalyzeResponse(
                     true,
                     ocr.status(),
@@ -96,14 +118,8 @@ public class UserVerificationController {
             );
         }
 
-        log.info("[OCR 미리보기] imageUrl={} status={} movie={} date={} headcount={} seat={} time={} theater={} venue={} watchedAt={} confidence={}",
-                request.imageUrl(), response.status(),
-                response.movieName().value(), response.watchDate().value(),
-                response.headcount().value(), response.seat().value(),
-                response.screeningTime().value(), response.theater().value(),
-                response.venue().value(), response.watchedAt().value(),
-                response.ocrConfidence());
-
+        log.info("[OCR 미리보기] imageUrl={} status={} confidence={}",
+                imageUrl, response.status(), response.ocrConfidence());
         return ResponseEntity.ok(ApiResponse.ok(response));
     }
 
