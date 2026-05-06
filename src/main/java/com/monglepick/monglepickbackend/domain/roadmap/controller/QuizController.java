@@ -1,5 +1,6 @@
 package com.monglepick.monglepickbackend.domain.roadmap.controller;
 
+import com.monglepick.monglepickbackend.domain.roadmap.dto.QuizDto.HintResponse;
 import com.monglepick.monglepickbackend.domain.roadmap.dto.QuizDto.MyHistoryItem;
 import com.monglepick.monglepickbackend.domain.roadmap.dto.QuizDto.MyStatsResponse;
 import com.monglepick.monglepickbackend.domain.roadmap.dto.QuizDto.QuizResponse;
@@ -186,6 +187,49 @@ public class QuizController extends BaseController {
         log.info("퀴즈 정답 제출: userId={}, quizId={}", userId, quizId);
 
         SubmitResponse response = quizService.submitAnswer(userId, quizId, request);
+        return ResponseEntity.ok(response);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // 퀴즈 힌트 사용 (JWT 필수)
+    // ────────────────────────────────────────────────────────────────
+
+    /**
+     * QUIZ_HINT 아이템 1개를 소비하고 퀴즈 힌트를 반환한다.
+     *
+     * <h4>처리 흐름</h4>
+     * <ol>
+     *   <li>PUBLISHED 퀴즈 확인</li>
+     *   <li>힌트 존재 여부 확인 (없으면 404)</li>
+     *   <li>QUIZ_HINT 아이템 소비 (보유 없으면 404)</li>
+     *   <li>힌트 텍스트 반환</li>
+     * </ol>
+     *
+     * @param quizId    힌트를 사용할 퀴즈 ID
+     * @param principal JWT 인증 정보 (필수)
+     * @return 200 OK — 힌트 응답 DTO
+     * @apiNote 401 Unauthorized: 미인증 | 404: 퀴즈/힌트/아이템 미존재
+     */
+    @Operation(
+            summary = "퀴즈 힌트 사용",
+            description = "QUIZ_HINT 아이템 1개를 소비하고 퀴즈 힌트를 반환합니다. " +
+                    "보유한 QUIZ_HINT 아이템이 없으면 404 오류가 반환됩니다.",
+            security = @SecurityRequirement(name = "bearerAuth")
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "힌트 반환 성공"),
+            @ApiResponse(responseCode = "401", description = "인증 필요"),
+            @ApiResponse(responseCode = "404", description = "퀴즈 미존재 / 힌트 없음 / 아이템 없음")
+    })
+    @PostMapping("/{quizId}/hint")
+    public ResponseEntity<HintResponse> useHint(
+            @Parameter(description = "힌트를 사용할 퀴즈 ID", required = true, example = "1")
+            @PathVariable Long quizId,
+            Principal principal
+    ) {
+        String userId = resolveUserId(principal);
+        log.info("퀴즈 힌트 사용 요청: userId={}, quizId={}", userId, quizId);
+        HintResponse response = quizService.useHint(userId, quizId);
         return ResponseEntity.ok(response);
     }
 

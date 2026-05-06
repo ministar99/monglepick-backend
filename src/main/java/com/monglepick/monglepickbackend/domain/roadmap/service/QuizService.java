@@ -3,11 +3,14 @@ package com.monglepick.monglepickbackend.domain.roadmap.service;
 // Jackson 3.x: com.fasterxml.jackson → tools.jackson 패키지 경로 변경 (Spring Boot 4.x)
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
+import com.monglepick.monglepickbackend.domain.roadmap.dto.QuizDto.HintResponse;
 import com.monglepick.monglepickbackend.domain.roadmap.dto.QuizDto.MyHistoryItem;
 import com.monglepick.monglepickbackend.domain.roadmap.dto.QuizDto.MyStatsResponse;
 import com.monglepick.monglepickbackend.domain.roadmap.dto.QuizDto.QuizResponse;
 import com.monglepick.monglepickbackend.domain.roadmap.dto.QuizDto.SubmitRequest;
 import com.monglepick.monglepickbackend.domain.roadmap.dto.QuizDto.SubmitResponse;
+import com.monglepick.monglepickbackend.domain.reward.constants.PointItemType;
+import com.monglepick.monglepickbackend.domain.reward.service.UserItemService;
 import com.monglepick.monglepickbackend.domain.roadmap.entity.Quiz;
 import com.monglepick.monglepickbackend.domain.roadmap.entity.QuizParticipation;
 import com.monglepick.monglepickbackend.domain.roadmap.repository.QuizParticipationRepository;
@@ -82,6 +85,9 @@ public class QuizService {
 
     /** 업적 서비스 — quiz_perfect 업적 달성 체크 */
     private final AchievementService achievementService;
+
+    /** 사용자 보유 아이템 서비스 — QUIZ_HINT 아이템 소비 */
+    private final UserItemService userItemService;
 
     /**
      * JSON 파싱용 ObjectMapper (스레드 안전, 클래스 로딩 시 1회 초기화).
@@ -258,6 +264,48 @@ public class QuizService {
         int awardedPoint = (isCorrect && !alreadyCorrect) ? quiz.getRewardPoint() : 0;
 
         return new SubmitResponse(isCorrect, quiz.getExplanation(), awardedPoint);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // 퀴즈 힌트 사용
+    // ────────────────────────────────────────────────────────────────
+
+    /**
+     * QUIZ_HINT 아이템 1개를 소비하고 퀴즈 힌트를 반환한다.
+     *
+     * <h4>처리 흐름</h4>
+     * <ol>
+     *   <li>PUBLISHED 퀴즈 존재 확인</li>
+     *   <li>퀴즈에 힌트가 등록되어 있는지 확인 (null이면 QUIZ_NO_HINT)</li>
+     *   <li>{@link UserItemService#useFirstActiveByType}로 QUIZ_HINT 아이템 소비</li>
+     *   <li>힌트 텍스트 반환</li>
+     * </ol>
+     *
+     * @param userId 요청 사용자 ID (JWT에서 추출)
+     * @param quizId 힌트를 요청할 퀴즈 ID
+     * @return 힌트 응답 DTO
+     * @throws BusinessException {@link ErrorCode#QUIZ_NOT_FOUND} 퀴즈가 PUBLISHED 상태가 아닐 때
+     * @throws BusinessException {@link ErrorCode#QUIZ_NO_HINT} 퀴즈에 힌트가 없을 때
+     * @throws BusinessException {@link ErrorCode#USER_ITEM_NOT_FOUND} 보유한 QUIZ_HINT 아이템이 없을 때
+     */
+    @Transactional
+    public HintResponse useHint(String userId, Long quizId) {
+        Quiz quiz = quizRepository.findById(quizId)
+                .filter(q -> q.getStatus() == Quiz.QuizStatus.PUBLISHED)
+                .orElseThrow(() -> new BusinessException(
+                        ErrorCode.QUIZ_NOT_FOUND,
+                        "존재하지 않거나 출제 중이 아닌 퀴즈입니다: quizId=" + quizId
+                ));
+
+        if (quiz.getHint() == null || quiz.getHint().isBlank()) {
+            throw new BusinessException(ErrorCode.QUIZ_NO_HINT,
+                    "힌트가 없는 퀴즈입니다: quizId=" + quizId);
+        }
+
+        userItemService.useFirstActiveByType(userId, PointItemType.QUIZ_HINT);
+        log.info("퀴즈 힌트 사용: userId={}, quizId={}", userId, quizId);
+
+        return new HintResponse(quiz.getHint());
     }
 
     // ────────────────────────────────────────────────────────────────
