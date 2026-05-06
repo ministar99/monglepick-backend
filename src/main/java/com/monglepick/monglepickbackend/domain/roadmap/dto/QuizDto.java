@@ -170,6 +170,16 @@ public class QuizDto {
      * @param rewardPoint    퀴즈 보상 포인트 (응시 시점 quiz.rewardPoint)
      * @param submittedAt    제출 시각
      */
+    /**
+     * 퀴즈 힌트 사용 응답 DTO.
+     *
+     * <p>{@code POST /api/v1/quizzes/{quizId}/hint} 응답.
+     * QUIZ_HINT 아이템 1개를 소비한 후 힌트 텍스트를 반환한다.</p>
+     *
+     * @param hint 힌트 텍스트
+     */
+    public record HintResponse(String hint) {}
+
     public record MyHistoryItem(
             Long quizId,
             String movieId,

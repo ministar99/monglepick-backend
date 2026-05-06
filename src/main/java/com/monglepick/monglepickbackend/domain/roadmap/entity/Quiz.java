@@ -122,6 +122,14 @@ public class Quiz extends BaseAuditEntity {
     private QuizStatus status = QuizStatus.PENDING;
 
     /**
+     * 퀴즈 힌트 (TEXT, nullable).
+     * 사용자가 QUIZ_HINT 아이템을 소비하면 공개되는 힌트 텍스트.
+     * null이면 힌트 없음.
+     */
+    @Column(name = "hint", columnDefinition = "TEXT")
+    private String hint;
+
+    /**
      * 출제 예정일 (DATE, nullable).
      * 특정 날짜에 퀴즈를 출제하도록 스케줄링하는 용도이다.
      * null이면 즉시 출제 가능 상태이다.
@@ -194,7 +202,7 @@ public class Quiz extends BaseAuditEntity {
      */
     public void updateInfo(String movieId, String question, String explanation,
                            String correctAnswer, String options, Integer rewardPoint,
-                           LocalDate quizDate) {
+                           LocalDate quizDate, String hint) {
         this.movieId = movieId;
         this.question = question;
         this.explanation = explanation;
@@ -202,6 +210,7 @@ public class Quiz extends BaseAuditEntity {
         this.options = options;
         this.rewardPoint = rewardPoint != null ? rewardPoint : this.rewardPoint;
         this.quizDate = quizDate;
+        this.hint = hint;
     }
 
     /**

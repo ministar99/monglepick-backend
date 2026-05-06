@@ -123,7 +123,8 @@ public class AdminQuizService {
                 request.correctAnswer(),
                 request.options(),
                 request.rewardPoint(),
-                request.quizDate()
+                request.quizDate(),
+                request.hint()
         );
 
         log.info("[관리자] 퀴즈 수정 — quizId={}, status={}", id, quiz.getStatus());
@@ -305,6 +306,7 @@ public class AdminQuizService {
                 quiz.getRewardPoint(),
                 quiz.getStatus().name(),
                 quiz.getQuizDate(),
+                quiz.getHint(),
                 quiz.getCreatedAt(),
                 quiz.getUpdatedAt()
         );
