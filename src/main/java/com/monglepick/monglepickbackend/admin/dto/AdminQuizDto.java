@@ -69,7 +69,10 @@ public class AdminQuizDto {
              * 출제 예정일 (YYYY-MM-DD).
              * null이면 즉시 출제 가능.
              */
-            LocalDate quizDate
+            LocalDate quizDate,
+
+            /** 퀴즈 힌트 (QUIZ_HINT 아이템 소비 시 공개). null이면 힌트 없음. */
+            String hint
     ) {}
 
     /**
@@ -100,6 +103,7 @@ public class AdminQuizDto {
             Integer rewardPoint,
             String status,
             LocalDate quizDate,
+            String hint,
             LocalDateTime createdAt,
             LocalDateTime updatedAt
     ) {}

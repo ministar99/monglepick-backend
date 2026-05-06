@@ -431,6 +431,9 @@ public enum ErrorCode {
     /** 퀴즈 — 이미 답변을 제출한 퀴즈에 재제출 시도. */
     QUIZ_ALREADY_SUBMITTED(HttpStatus.CONFLICT, "ROAD008", "이미 답변을 제출한 퀴즈입니다. 퀴즈는 한 번만 풀 수 있습니다."),
 
+    /** 퀴즈 — 힌트가 등록되지 않은 퀴즈에 힌트 사용 시도. */
+    QUIZ_NO_HINT(HttpStatus.NOT_FOUND, "ROAD009", "이 퀴즈에는 힌트가 등록되어 있지 않습니다."),
+
     /** 도장깨기 — 이미 완료 처리한 영화를 중복 완료 시도. */
     ALREADY_VERIFIED_MOVIE(HttpStatus.CONFLICT, "ROAD006", "이미 완료 처리한 영화입니다"),
 
