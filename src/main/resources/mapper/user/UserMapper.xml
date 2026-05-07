@@ -135,6 +135,18 @@
           AND last_login_at &lt; #{end}
     </select>
 
+    <!-- 지정 기간 내 마지막 로그인 시각의 시간대별 분포 -->
+    <select id="countLastLoginGroupedByHourBetween" resultType="map">
+        SELECT HOUR(last_login_at) AS hour,
+               COUNT(*) AS cnt
+        FROM users
+        WHERE last_login_at IS NOT NULL
+          AND last_login_at >= #{start}
+          AND last_login_at &lt; #{end}
+        GROUP BY HOUR(last_login_at)
+        ORDER BY hour ASC
+    </select>
+
     <!-- 지정 시각 이후 신규 가입한 사용자 수 -->
     <select id="countByCreatedAtAfter" resultType="long">
         SELECT COUNT(*)
@@ -155,19 +167,8 @@
         SELECT <include refid="allColumns"/>
         FROM users
         WHERE is_deleted = false
-          AND created_at BETWEEN #{start} AND #{end}
-    </select>
-
-    <!-- 특정 사용자 ID 목록 중 지정 기간 내 재방문한 사용자 수 — 코호트 리텐션 분자 -->
-    <select id="countCohortRetention" resultType="long">
-        SELECT COUNT(*)
-        FROM users
-        WHERE user_id IN
-            <foreach collection="userIds" item="id" open="(" separator="," close=")">
-                #{id}
-            </foreach>
-          AND last_login_at IS NOT NULL
-          AND last_login_at BETWEEN #{start} AND #{end}
+          AND created_at >= #{start}
+          AND created_at &lt; #{end}
     </select>
 
     <!--

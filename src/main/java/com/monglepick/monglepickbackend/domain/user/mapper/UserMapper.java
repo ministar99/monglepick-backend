@@ -112,6 +112,17 @@ public interface UserMapper {
     long countByLastLoginAtBetween(@Param("start") LocalDateTime start,
                                     @Param("end") LocalDateTime end);
 
+    /**
+     * 지정 기간 내 마지막 로그인 시각을 시간대(0~23시)별로 그룹핑한다.
+     *
+     * @param start 기간 시작 시각
+     * @param end   기간 종료 시각
+     * @return [{hour, cnt}] 형태의 맵 리스트
+     */
+    List<java.util.Map<String, Object>> countLastLoginGroupedByHourBetween(
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end);
+
     /** 지정 시각 이후 신규 가입한 사용자 수 */
     long countByCreatedAtAfter(@Param("after") LocalDateTime after);
 
@@ -122,15 +133,6 @@ public interface UserMapper {
     /** 지정 기간 내 가입한 사용자 목록 — 코호트 리텐션 계산용 (탈퇴 제외) */
     List<User> findByCreatedAtBetween(@Param("start") LocalDateTime start,
                                        @Param("end") LocalDateTime end);
-
-    /**
-     * 특정 사용자 ID 목록 중 지정 기간 내 재방문한 사용자 수.
-     *
-     * <p>코호트 리텐션 계산: "N주차 코호트 중 M주차에 재방문한 사용자 수".</p>
-     */
-    long countCohortRetention(@Param("userIds") List<String> userIds,
-                               @Param("start") LocalDateTime start,
-                               @Param("end") LocalDateTime end);
 
     /**
      * 지정 시각 이전에 마지막으로 로그인한 사용자 수 — 이탈 위험 신호 집계용.

@@ -251,6 +251,26 @@
           AND created_at &lt; #{end}
     </select>
 
+    <!--
+        지정 기간 내 리뷰의 영화 장르 분포 집계.
+        reviews.movie_id 와 movies.genres(JSON 배열)을 결합하여 장르별 건수를 계산한다.
+        소프트 삭제 리뷰 제외. MySQL 8.0+ JSON_TABLE 사용.
+    -->
+    <select id="countGenresByCreatedAtBetween" resultType="map">
+        SELECT jt.genre AS genre,
+               COUNT(*) AS cnt
+        FROM reviews r
+        JOIN movies m ON r.movie_id = m.movie_id COLLATE utf8mb4_unicode_ci,
+        JSON_TABLE(m.genres, '$[*]' COLUMNS (genre VARCHAR(100) PATH '$')) jt
+        WHERE r.is_deleted = false
+          AND r.created_at >= #{start}
+          AND r.created_at &lt; #{end}
+          AND m.genres IS NOT NULL
+          AND JSON_LENGTH(m.genres) > 0
+        GROUP BY jt.genre
+        ORDER BY cnt DESC, jt.genre ASC
+    </select>
+
     <select id="findAverageRating" resultType="java.lang.Double">
         SELECT AVG(rating)
         FROM reviews
@@ -465,6 +485,22 @@
         FROM reviews
         WHERE created_at >= #{start}
           AND created_at  &lt; #{end}
+    </select>
+
+    <!--
+        특정 사용자 목록 중 지정 기간 내 리뷰를 작성한 고유 사용자 ID 목록.
+        코호트 리텐션의 활동 판정용. 소프트 삭제 리뷰 제외.
+    -->
+    <select id="findDistinctUserIdsByUserIdsAndCreatedAtBetween" resultType="string">
+        SELECT DISTINCT user_id
+        FROM reviews
+        WHERE is_deleted = false
+          AND created_at >= #{start}
+          AND created_at &lt; #{end}
+          AND user_id IN
+          <foreach collection="userIds" item="userId" open="(" separator="," close=")">
+              #{userId}
+          </foreach>
     </select>
 
     <!--

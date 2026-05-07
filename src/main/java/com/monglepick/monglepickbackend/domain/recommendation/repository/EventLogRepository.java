@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 
 /**
  * 이벤트 로그 JPA 리포지토리 — event_logs 테이블 데이터 접근.
@@ -42,4 +44,20 @@ public interface EventLogRepository extends JpaRepository<EventLog, Long> {
     @Query("SELECT COUNT(e) FROM EventLog e WHERE e.userId = :userId AND e.createdAt > :since")
     long countByUserIdAndCreatedAtAfter(@Param("userId") String userId,
                                         @Param("since") LocalDateTime since);
+
+    /**
+     * 특정 사용자 목록 중 지정 기간 내 이벤트를 발생시킨 고유 사용자 ID 목록을 반환한다.
+     */
+    @Query("""
+            SELECT DISTINCT e.userId
+            FROM EventLog e
+            WHERE e.userId IN :userIds
+              AND e.createdAt >= :start
+              AND e.createdAt < :end
+            """)
+    List<String> findDistinctUserIdsByUserIdInAndCreatedAtBetween(
+            @Param("userIds") Collection<String> userIds,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end
+    );
 }

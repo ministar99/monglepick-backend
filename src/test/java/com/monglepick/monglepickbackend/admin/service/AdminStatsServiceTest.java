@@ -1,10 +1,16 @@
 package com.monglepick.monglepickbackend.admin.service;
 
+import com.monglepick.monglepickbackend.admin.dto.StatsDto.BehaviorResponse;
+import com.monglepick.monglepickbackend.admin.dto.StatsDto.RetentionResponse;
+import com.monglepick.monglepickbackend.admin.repository.AdminChatSessionRepository;
 import com.monglepick.monglepickbackend.admin.dto.StatsDto.OverviewResponse;
 import com.monglepick.monglepickbackend.admin.dto.StatsDto.TrendsResponse;
 import com.monglepick.monglepickbackend.domain.community.entity.PostStatus;
 import com.monglepick.monglepickbackend.domain.community.mapper.PostMapper;
+import com.monglepick.monglepickbackend.domain.recommendation.repository.EventLogRepository;
 import com.monglepick.monglepickbackend.domain.review.mapper.ReviewMapper;
+import com.monglepick.monglepickbackend.domain.search.repository.SearchHistoryRepository;
+import com.monglepick.monglepickbackend.domain.user.entity.User;
 import com.monglepick.monglepickbackend.domain.user.mapper.UserMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,6 +25,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -58,6 +65,15 @@ class AdminStatsServiceTest {
 
     @Mock
     private PostMapper postMapper;
+
+    @Mock
+    private EventLogRepository eventLogRepository;
+
+    @Mock
+    private SearchHistoryRepository searchHistoryRepository;
+
+    @Mock
+    private AdminChatSessionRepository adminChatSessionRepository;
 
     @InjectMocks
     private AdminStatsService adminStatsService;
@@ -119,5 +135,90 @@ class AdminStatsServiceTest {
                     assertThat(item.reviews()).isEqualTo(2L);
                     assertThat(item.posts()).isEqualTo(4L);
                 });
+    }
+
+    @Test
+    @DisplayName("getUserBehavior(period) 는 선택 기간 기준 장르 분포와 시간대 분포를 집계한다")
+    void getUserBehavior_appliesSelectedPeriod() {
+        when(reviewMapper.countGenresByCreatedAtBetween(any(), any())).thenReturn(List.of(
+                Map.of("genre", "액션", "cnt", 5L),
+                Map.of("genre", "드라마", "cnt", 3L)
+        ));
+        when(userMapper.countLastLoginGroupedByHourBetween(any(), any())).thenReturn(List.of(
+                Map.of("hour", 9, "cnt", 2L),
+                Map.of("hour", 21, "cnt", 4L)
+        ));
+
+        BehaviorResponse response = adminStatsService.getUserBehavior("7d");
+
+        assertThat(response.genrePreferences()).hasSize(2);
+        assertThat(response.genrePreferences().getFirst().genre()).isEqualTo("액션");
+        assertThat(response.genrePreferences().getFirst().count()).isEqualTo(5L);
+        assertThat(response.genrePreferences().getFirst().percentage()).isEqualTo(62.5d);
+        assertThat(response.genrePreferences().get(1).genre()).isEqualTo("드라마");
+        assertThat(response.genrePreferences().get(1).percentage()).isEqualTo(37.5d);
+
+        assertThat(response.hourlyActivity()).hasSize(24);
+        assertThat(response.hourlyActivity().get(9).count()).isEqualTo(2L);
+        assertThat(response.hourlyActivity().get(21).count()).isEqualTo(4L);
+        assertThat(response.hourlyActivity().get(0).count()).isZero();
+
+        ArgumentCaptor<LocalDateTime> startCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> endCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(reviewMapper).countGenresByCreatedAtBetween(startCaptor.capture(), endCaptor.capture());
+
+        LocalDate today = LocalDate.now(KST);
+        assertThat(startCaptor.getValue()).isEqualTo(today.minusDays(6).atStartOfDay());
+        assertThat(endCaptor.getValue()).isEqualTo(today.plusDays(1).atStartOfDay());
+        verify(userMapper).countLastLoginGroupedByHourBetween(startCaptor.getValue(), endCaptor.getValue());
+    }
+
+    @Test
+    @DisplayName("getRetention(cohortWeeks, horizonWeeks) 는 완료된 주간 코호트와 실제 활동 로그 기준 유지율을 계산한다")
+    void getRetention_usesDedicatedFiltersAndActualActivity() {
+        LocalDate currentWeekStart = LocalDate.now(KST)
+                .with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
+
+        User oldestCohortUser = User.builder().userId("user-a").build();
+        User newestCohortUser = User.builder().userId("user-b").build();
+
+        when(userMapper.findByCreatedAtBetween(any(), any()))
+                .thenReturn(List.of(oldestCohortUser))
+                .thenReturn(List.of(newestCohortUser));
+
+        when(reviewMapper.findDistinctUserIdsByUserIdsAndCreatedAtBetween(any(), any(), any()))
+                .thenReturn(List.of("user-a"))
+                .thenReturn(List.of());
+        when(eventLogRepository.findDistinctUserIdsByUserIdInAndCreatedAtBetween(any(), any(), any()))
+                .thenReturn(List.of())
+                .thenReturn(List.of());
+        when(searchHistoryRepository.findDistinctUserIdsByUserIdInAndSearchedAtBetween(any(), any(), any()))
+                .thenReturn(List.of())
+                .thenReturn(List.of());
+        when(adminChatSessionRepository.findDistinctUserIdsByUserIdInAndCreatedAtBetween(any(), any(), any()))
+                .thenReturn(List.of())
+                .thenReturn(List.of());
+
+        RetentionResponse response = adminStatsService.getRetention(2, 1);
+
+        assertThat(response.cohorts()).hasSize(2);
+        assertThat(response.cohorts().getFirst().cohortWeek())
+                .isEqualTo(currentWeekStart.minusWeeks(2).getYear() + "-W"
+                        + String.format("%02d", currentWeekStart.minusWeeks(2)
+                        .get(java.time.temporal.IsoFields.WEEK_OF_WEEK_BASED_YEAR)));
+        assertThat(response.cohorts().getFirst().cohortSize()).isEqualTo(1L);
+        assertThat(response.cohorts().getFirst().retentionRates()).containsExactly(100.0d);
+
+        assertThat(response.cohorts().get(1).cohortSize()).isEqualTo(1L);
+        assertThat(response.cohorts().get(1).retentionRates()).isEmpty();
+
+        ArgumentCaptor<LocalDateTime> startCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> endCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(userMapper, times(2)).findByCreatedAtBetween(startCaptor.capture(), endCaptor.capture());
+
+        assertThat(startCaptor.getAllValues().getFirst()).isEqualTo(currentWeekStart.minusWeeks(2).atStartOfDay());
+        assertThat(endCaptor.getAllValues().getFirst()).isEqualTo(currentWeekStart.minusWeeks(1).atStartOfDay());
+        assertThat(startCaptor.getAllValues().get(1)).isEqualTo(currentWeekStart.minusWeeks(1).atStartOfDay());
+        assertThat(endCaptor.getAllValues().get(1)).isEqualTo(currentWeekStart.atStartOfDay());
     }
 }
