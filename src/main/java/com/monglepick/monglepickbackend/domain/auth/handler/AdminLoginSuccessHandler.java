@@ -1,5 +1,6 @@
 package com.monglepick.monglepickbackend.domain.auth.handler;
 
+import com.monglepick.monglepickbackend.admin.service.AdminAuditService;
 import com.monglepick.monglepickbackend.domain.auth.dto.AuthDto.UserInfo;
 import com.monglepick.monglepickbackend.domain.auth.service.JwtService;
 import com.monglepick.monglepickbackend.domain.auth.service.LoginPostProcessor;
@@ -38,6 +39,7 @@ public class AdminLoginSuccessHandler implements AuthenticationSuccessHandler {
     private final ObjectMapper objectMapper;
     private final CookieUtil cookieUtil;
     private final LoginPostProcessor loginPostProcessor;
+    private final AdminAuditService adminAuditService;
 
     private record AdminLoginResponse(String accessToken, UserInfo user) {
     }
@@ -75,5 +77,13 @@ public class AdminLoginSuccessHandler implements AuthenticationSuccessHandler {
         objectMapper.writeValue(response.getWriter(), new AdminLoginResponse(accessToken, userInfo));
 
         log.info("관리자 로그인 성공 — userId: {}, email: {}", user.getUserId(), email);
+
+        adminAuditService.log(
+                AdminAuditService.ACTION_ADMIN_LOGIN,
+                AdminAuditService.TARGET_ADMIN,
+                user.getUserId(),
+                "관리자 로그인 성공 (email: " + email + ")",
+                request
+        );
     }
 }
