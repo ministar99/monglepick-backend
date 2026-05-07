@@ -2,6 +2,7 @@ package com.monglepick.monglepickbackend.admin.service;
 
 import com.monglepick.monglepickbackend.admin.repository.AdminAuditLogRepository;
 import com.monglepick.monglepickbackend.domain.admin.entity.AdminAuditLog;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
@@ -214,7 +215,7 @@ public class AdminAuditService {
      * @param description 사람이 읽을 수 있는 설명 (최대 2000자, 앞쪽에 actor prefix 자동 추가)
      */
     public void log(String actionType, String targetType, String targetId, String description) {
-        log(actionType, targetType, targetId, description, null, null);
+        logInternal(actionType, targetType, targetId, description, null, null, null);
     }
 
     /**
@@ -240,19 +241,41 @@ public class AdminAuditService {
             String beforeData,
             String afterData
     ) {
+        logInternal(actionType, targetType, targetId, description, beforeData, afterData, null);
+    }
+
+    /** IP 주소까지 기록하는 버전 — 로그인 이벤트 등 HttpServletRequest 접근 가능한 컨텍스트에서 사용. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void log(
+            String actionType,
+            String targetType,
+            String targetId,
+            String description,
+            HttpServletRequest request
+    ) {
+        logInternal(actionType, targetType, targetId, description, null, null, extractIp(request));
+    }
+
+    private void logInternal(
+            String actionType,
+            String targetType,
+            String targetId,
+            String description,
+            String beforeData,
+            String afterData,
+            String ipAddress
+    ) {
         try {
-            // actor(수행자) 식별자를 description 앞쪽에 prefix 로 부착한다.
-            // adminId Long 컬럼은 현재 인증 컨텍스트가 문자열만 제공하므로 NULL 로 둔다.
             String actor = resolveCurrentActor();
             String fullDescription = formatDescription(actor, description);
 
             AdminAuditLog entry = AdminAuditLog.builder()
-                    .adminId(null)                   // TODO: admin 테이블 매핑 도입 시 여기에 연결
+                    .adminId(null)
                     .actionType(actionType)
                     .targetType(targetType)
                     .targetId(truncateTargetId(targetId))
                     .description(fullDescription)
-                    .ipAddress(null)                 // TODO: HttpServletRequest 연동 시 기록
+                    .ipAddress(ipAddress)
                     .beforeData(beforeData)
                     .afterData(afterData)
                     .build();
@@ -262,9 +285,6 @@ public class AdminAuditService {
             log.debug("[감사 로그] 저장 완료 — actor={}, actionType={}, targetType={}, targetId={}",
                     actor, actionType, targetType, targetId);
         } catch (Exception e) {
-            // 감사 로그 실패는 업무 트랜잭션에 영향을 주지 않는다 — 경고만 남기고 삼킨다.
-            // REQUIRES_NEW 로 격리되어 있어도 catch 를 한 번 더 두어 호출자 쪽에 예외가
-            // 전파될 가능성을 원천 차단한다.
             log.warn("[감사 로그] 저장 실패 — actionType={}, targetType={}, targetId={}, err={}",
                     actionType, targetType, targetId, e.getMessage());
         }
@@ -318,5 +338,20 @@ public class AdminAuditService {
     private String truncateTargetId(String targetId) {
         if (targetId == null) return null;
         return targetId.length() > 100 ? targetId.substring(0, 100) : targetId;
+    }
+
+    /** X-Forwarded-For → X-Real-IP → RemoteAddr 순으로 클라이언트 IP를 추출한다. */
+    private String extractIp(HttpServletRequest request) {
+        if (request == null) return null;
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            return forwarded.split(",")[0].trim();
+        }
+        String realIp = request.getHeader("X-Real-IP");
+        if (realIp != null && !realIp.isBlank()) {
+            return realIp.trim();
+        }
+        String remoteAddr = request.getRemoteAddr();
+        return "0:0:0:0:0:0:0:1".equals(remoteAddr) ? "127.0.0.1" : remoteAddr;
     }
 }
