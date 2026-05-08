@@ -68,7 +68,7 @@ class QuizPublishSchedulerTest {
     class MultiCandidateTest {
 
         @Test
-        @DisplayName("후보 1건을 PUBLISHED + 오늘 날짜로 발행한다")
+        @DisplayName("quiz_date=null 후보를 PUBLISHED + 오늘 날짜로 발행한다")
         void publishesCandidateWithTodayDate() {
             // given — 멱등 가드 통과 + 후보 1건
             Quiz candidate = buildApprovedQuiz(1L, "movie-1");
@@ -76,14 +76,44 @@ class QuizPublishSchedulerTest {
 
             when(adminQuizRepository.existsByStatusAndQuizDate(Quiz.QuizStatus.PUBLISHED, today))
                     .thenReturn(false);
-            when(adminQuizRepository
-                    .findFirstByStatusAndQuizDateIsNullOrderByCreatedAtAsc(Quiz.QuizStatus.APPROVED))
+            when(adminQuizRepository.findFirstPublishableByStatus(Quiz.QuizStatus.APPROVED, today))
                     .thenReturn(Optional.of(candidate));
 
             // when
             int result = scheduler.manualPublish();
 
             // then — 1건 발행 + 엔티티 상태 전이 + save 호출
+            assertThat(result).isEqualTo(1);
+            assertThat(candidate.getStatus()).isEqualTo(Quiz.QuizStatus.PUBLISHED);
+            assertThat(candidate.getQuizDate()).isEqualTo(today);
+            verify(adminQuizRepository).save(candidate);
+        }
+
+        @Test
+        @DisplayName("quiz_date가 과거로 세팅된 APPROVED 후보도 오늘 날짜로 발행한다")
+        void publishesCandidateWithPastQuizDate() {
+            // given — quiz_date 가 이미 세팅된 APPROVED 퀴즈 (기존 쿼리에서 누락되던 케이스)
+            LocalDate today = LocalDate.now(KST);
+            Quiz candidate = Quiz.builder()
+                    .quizId(3L)
+                    .movieId("movie-3")
+                    .question("과거 날짜 퀴즈")
+                    .correctAnswer("정답")
+                    .options("[\"정답\",\"오답1\",\"오답2\",\"오답3\"]")
+                    .rewardPoint(10)
+                    .status(Quiz.QuizStatus.APPROVED)
+                    .quizDate(today.minusDays(1))
+                    .build();
+
+            when(adminQuizRepository.existsByStatusAndQuizDate(Quiz.QuizStatus.PUBLISHED, today))
+                    .thenReturn(false);
+            when(adminQuizRepository.findFirstPublishableByStatus(Quiz.QuizStatus.APPROVED, today))
+                    .thenReturn(Optional.of(candidate));
+
+            // when
+            int result = scheduler.manualPublish();
+
+            // then — 1건 발행 + quiz_date 는 오늘로 덮어씀
             assertThat(result).isEqualTo(1);
             assertThat(candidate.getStatus()).isEqualTo(Quiz.QuizStatus.PUBLISHED);
             assertThat(candidate.getQuizDate()).isEqualTo(today);
@@ -113,7 +143,7 @@ class QuizPublishSchedulerTest {
             // then — 0 반환 + 후보 조회 / save 모두 호출되지 않음
             assertThat(result).isEqualTo(0);
             verify(adminQuizRepository, never())
-                    .findFirstByStatusAndQuizDateIsNullOrderByCreatedAtAsc(any());
+                    .findFirstPublishableByStatus(any(), any());
             verify(adminQuizRepository, never()).save(any());
         }
     }
@@ -133,8 +163,7 @@ class QuizPublishSchedulerTest {
             LocalDate today = LocalDate.now(KST);
             when(adminQuizRepository.existsByStatusAndQuizDate(Quiz.QuizStatus.PUBLISHED, today))
                     .thenReturn(false);
-            when(adminQuizRepository
-                    .findFirstByStatusAndQuizDateIsNullOrderByCreatedAtAsc(Quiz.QuizStatus.APPROVED))
+            when(adminQuizRepository.findFirstPublishableByStatus(Quiz.QuizStatus.APPROVED, today))
                     .thenReturn(Optional.empty());
 
             // when
@@ -174,8 +203,7 @@ class QuizPublishSchedulerTest {
             LocalDate today = LocalDate.now(KST);
             when(adminQuizRepository.existsByStatusAndQuizDate(Quiz.QuizStatus.PUBLISHED, today))
                     .thenReturn(false);
-            when(adminQuizRepository
-                    .findFirstByStatusAndQuizDateIsNullOrderByCreatedAtAsc(Quiz.QuizStatus.APPROVED))
+            when(adminQuizRepository.findFirstPublishableByStatus(Quiz.QuizStatus.APPROVED, today))
                     .thenReturn(Optional.of(candidate));
 
             // when
@@ -210,6 +238,36 @@ class QuizPublishSchedulerTest {
             // then — runDailyPublish 와 동일하게 0 반환 + save 미호출
             assertThat(result).isEqualTo(0);
             verify(adminQuizRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("quiz_date 가 null 인 APPROVED 가 없어도 quiz_date <= 오늘인 후보를 발행한다")
+        void manualPublishPicksQuizWithExistingQuizDate() {
+            // given — 오늘 날짜가 이미 세팅된 APPROVED 퀴즈 (이전 쿼리에서 누락되던 시나리오)
+            LocalDate today = LocalDate.now(KST);
+            Quiz candidate = Quiz.builder()
+                    .quizId(4L)
+                    .movieId("movie-4")
+                    .question("날짜 세팅 퀴즈")
+                    .correctAnswer("정답")
+                    .options("[\"정답\",\"오답1\",\"오답2\",\"오답3\"]")
+                    .rewardPoint(10)
+                    .status(Quiz.QuizStatus.APPROVED)
+                    .quizDate(today)
+                    .build();
+
+            when(adminQuizRepository.existsByStatusAndQuizDate(Quiz.QuizStatus.PUBLISHED, today))
+                    .thenReturn(false);
+            when(adminQuizRepository.findFirstPublishableByStatus(Quiz.QuizStatus.APPROVED, today))
+                    .thenReturn(Optional.of(candidate));
+
+            // when
+            int result = scheduler.manualPublish();
+
+            // then
+            assertThat(result).isEqualTo(1);
+            assertThat(candidate.getStatus()).isEqualTo(Quiz.QuizStatus.PUBLISHED);
+            verify(adminQuizRepository).save(candidate);
         }
     }
 }
