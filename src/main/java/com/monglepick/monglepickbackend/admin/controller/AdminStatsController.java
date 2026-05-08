@@ -267,9 +267,9 @@ public class AdminStatsController {
 
     /**
      * 사용자 행동 패턴을 조회한다.
-     * 장르 선호도, 시간대별 활동량. (현재 mock)
+     * 선택 기간 기준 장르 선호도, 시간대별 활동량.
      */
-    @Operation(summary = "사용자 행동", description = "장르 선호도 + 시간대별 활동량 (mock)")
+    @Operation(summary = "사용자 행동", description = "선택 기간 기준 장르 선호도 + 시간대별 활동량")
     @GetMapping("/behavior")
     public ResponseEntity<ApiResponse<BehaviorResponse>> getBehavior(
             @RequestParam(defaultValue = "30d") String period) {
@@ -279,15 +279,24 @@ public class AdminStatsController {
 
     /**
      * 주간 코호트 리텐션을 조회한다.
-     * User.createdAt 기반 주간 코호트, lastLoginAt으로 재방문 판단.
+     * 최근 코호트 수와 유지 주차를 분리해 조회한다.
      */
     @Operation(summary = "코호트 리텐션", description = "주간 코호트별 리텐션율 히트맵")
     @GetMapping("/retention")
     public ResponseEntity<ApiResponse<RetentionResponse>> getRetention(
-            @Parameter(description = "분석할 주간 수", example = "4")
-            @RequestParam(defaultValue = "4") int weeks) {
-        log.debug("[admin-stats-api] GET /retention — weeks={}", weeks);
-        return ResponseEntity.ok(ApiResponse.ok(adminStatsService.getRetention(weeks)));
+            @Parameter(description = "표시할 최근 코호트 수", example = "8")
+            @RequestParam(required = false) Integer cohortWeeks,
+            @Parameter(description = "코호트별 유지 주차 수", example = "8")
+            @RequestParam(required = false) Integer horizonWeeks,
+            @Parameter(description = "구버전 호환용 단일 weeks 파라미터", example = "8")
+            @RequestParam(required = false) Integer weeks) {
+        int resolvedCohortWeeks = cohortWeeks != null ? cohortWeeks : (weeks != null ? weeks : 8);
+        int resolvedHorizonWeeks = horizonWeeks != null ? horizonWeeks : (weeks != null ? weeks : 8);
+        log.debug("[admin-stats-api] GET /retention — cohortWeeks={}, horizonWeeks={}, legacyWeeks={}",
+                resolvedCohortWeeks, resolvedHorizonWeeks, weeks);
+        return ResponseEntity.ok(ApiResponse.ok(
+                adminStatsService.getRetention(resolvedCohortWeeks, resolvedHorizonWeeks)
+        ));
     }
 
     // ──────────────────────────────────────────────

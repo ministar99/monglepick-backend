@@ -12,12 +12,11 @@ import com.monglepick.monglepickbackend.domain.payment.entity.UserSubscription;
 import com.monglepick.monglepickbackend.domain.payment.repository.PaymentOrderRepository;
 import com.monglepick.monglepickbackend.domain.payment.repository.SubscriptionPlanRepository;
 import com.monglepick.monglepickbackend.domain.payment.repository.UserSubscriptionRepository;
+import com.monglepick.monglepickbackend.domain.recommendation.repository.EventLogRepository;
 import com.monglepick.monglepickbackend.domain.recommendation.entity.RecommendationImpact;
 import com.monglepick.monglepickbackend.domain.recommendation.entity.RecommendationLog;
-import com.monglepick.monglepickbackend.domain.recommendation.entity.UserBehaviorProfile;
 import com.monglepick.monglepickbackend.domain.recommendation.repository.RecommendationImpactRepository;
 import com.monglepick.monglepickbackend.domain.recommendation.repository.RecommendationLogRepository;
-import com.monglepick.monglepickbackend.domain.recommendation.repository.UserBehaviorProfileRepository;
 import com.monglepick.monglepickbackend.domain.review.mapper.ReviewMapper;
 import com.monglepick.monglepickbackend.domain.reward.repository.UserAiQuotaRepository;
 import com.monglepick.monglepickbackend.domain.reward.repository.UserAttendanceRepository;
@@ -52,18 +51,23 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.time.temporal.IsoFields;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -78,8 +82,8 @@ import java.util.stream.Collectors;
  *   <li>일별 추이 차트</li>
  *   <li>추천 성능/분포/로그 — {@code recommendation_impact} 테이블 기반</li>
  *   <li>검색 분석 — {@code search_history} 테이블 기반</li>
- *   <li>사용자 행동(장르 선호) — {@code user_behavior_profile.genre_affinity}</li>
- *   <li>코호트 리텐션 — {@code users.last_login_at} 기반</li>
+ *   <li>사용자 행동(장르 선호) — 기간 내 {@code reviews + movies.genres} 기반</li>
+ *   <li>코호트 리텐션 — {@code reviews + event_logs + search_history + chat_session_archive} 기반</li>
  *   <li>매출/구독 — {@code payment_orders}, {@code user_subscriptions}</li>
  * </ul>
  *
@@ -117,6 +121,8 @@ public class AdminStatsService {
     private final PostMapper postMapper;
     /* 추천 임팩트 리포지토리 — CTR/위시리스트율 집계 */
     private final RecommendationImpactRepository recommendationImpactRepository;
+    /* 이벤트 로그 리포지토리 — 코호트 리텐션 활동 판정 */
+    private final EventLogRepository eventLogRepository;
 
     /**
      * 추천 로그 리포지토리 (2026-04-15 추가).
@@ -130,8 +136,6 @@ public class AdminStatsService {
     private final PopularSearchKeywordRepository popularSearchKeywordRepository;
     /* Phase 4: Mock 제거 — Movie genres 파싱 (장르 분포 집계용) */
     private final MovieRepository movieRepository;
-    /* Phase 4: Mock 제거 — UserBehaviorProfile 의 genreAffinity JSON 집계 */
-    private final UserBehaviorProfileRepository userBehaviorProfileRepository;
     /* 포인트 경제 통계 — PointsHistory 집계 */
     private final AdminPointsHistoryRepository adminPointsHistoryRepository;
     /* 포인트 경제 통계 — UserPoint 잔액/등급 집계 */
@@ -165,7 +169,7 @@ public class AdminStatsService {
     /* 고객센터 챗봇 로그 — support_chat_log 테이블 집계 (자동화율·의도 분포·hop) */
     private final SupportChatLogRepository supportChatLogRepository;
 
-    /* Phase 4: Mock 제거 — Movie.genres / UserBehaviorProfile.genreAffinity JSON 파싱 */
+    /* Phase 4: Mock 제거 — Movie.genres 등 JSON 통계 필드 파싱 */
     private static final ObjectMapper STATS_OBJECT_MAPPER = new ObjectMapper();
 
     @Value("${admin.health.recommend-url:http://localhost:8001}")
@@ -174,6 +178,8 @@ public class AdminStatsService {
     /** recommend 관리자 집계 API 호출용 클라이언트. */
     private final RestClient restClient = RestClient.create();
 
+    /** 행동 통계 KST 시간대 — 기간 필터를 한국 날짜 기준으로 고정한다. */
+    private static final ZoneId BEHAVIOR_STATS_ZONE = ZoneId.of("Asia/Seoul");
     /** 서비스 통계 KST 시간대 — 기간 필터를 한국 날짜 기준으로 고정한다. */
     private static final ZoneId SERVICE_STATS_ZONE = ZoneId.of("Asia/Seoul");
     /* ── 날짜 포맷터 ── */
@@ -877,85 +883,51 @@ public class AdminStatsService {
     /**
      * 사용자 행동 패턴을 반환한다.
      *
-     * <p>Phase 4 (Mock 제거): {@code user_behavior_profile.genre_affinity} JSON 필드를
-     * Java 에서 파싱·집계한 실데이터를 반환한다. BehaviorProfileScheduler 가 매일 03:00 에
-     * reviews + event_logs 기반으로 갱신하므로 ("리뷰 작성 = 시청 완료" 단일 진실 원본,
-     * watch_history 도메인 폐기 2026-04-08), 이 메서드는 최신 프로필 스냅샷을
-     * 사용자별로 합산한 결과를 노출한다.</p>
+     * <p>선택 기간 내 리뷰 작성 데이터를 기준으로 장르별 선호도를 집계하고,
+     * 같은 기간 내 users.last_login_at 의 시간(hour) 분포로 시간대별 활동량을 계산한다.</p>
      *
-     * <p>시간대별 활동량은 User.lastLoginAt 의 시간을 추출하여 24시간 분포로 집계한다.
-     * (이벤트 로그 기반의 정확한 활동량은 향후 EventLog 스케줄러 통합 시 보강.)</p>
-     *
-     * @param period 기간 문자열 (현재 미사용 — 전체 프로필 누적)
+     * @param period 기간 문자열 ("7d", "30d", "90d")
      */
     public BehaviorResponse getUserBehavior(String period) {
-        log.debug("[admin-stats] 사용자 행동 집계 시작 — UserBehaviorProfile + lastLoginAt 기반");
+        int days = parsePeriodDays(period);
+        LocalDate endDate = LocalDate.now(BEHAVIOR_STATS_ZONE);
+        LocalDate startDate = endDate.minusDays(days - 1L);
+        LocalDateTime start = startDate.atStartOfDay();
+        LocalDateTime end = endDate.plusDays(1).atStartOfDay();
 
-        // ──────────── 1. 장르 선호도: UserBehaviorProfile.genreAffinity 합산 ────────────
-        // 최대 1000건 제한으로 메모리 보호 (전체 사용자가 100만+인 경우 대비)
-        Page<UserBehaviorProfile> profilePage = userBehaviorProfileRepository.findAll(
-                PageRequest.of(0, 1000)
-        );
-        List<UserBehaviorProfile> profiles = profilePage.getContent();
+        log.debug("[admin-stats] 사용자 행동 집계 시작 — period={}, start={}, end={}",
+                period, startDate, endDate);
 
-        // 장르별 누적 가중치 (Double 합산)
-        Map<String, Double> genreScoreSum = new HashMap<>();
-        double totalScore = 0.0;
+        // ──────────── 1. 장르 선호도: 기간 내 리뷰 기준 장르 분포 ────────────
+        List<Map<String, Object>> genreRows = reviewMapper.countGenresByCreatedAtBetween(start, end);
+        long totalGenreCount = genreRows.stream()
+                .mapToLong(row -> asLong(row.get("cnt")))
+                .sum();
 
-        for (UserBehaviorProfile profile : profiles) {
-            String affinityJson = profile.getGenreAffinity();
-            if (affinityJson == null || affinityJson.isBlank()) {
-                continue;
-            }
-            try {
-                JsonNode root = STATS_OBJECT_MAPPER.readTree(affinityJson);
-                if (root.isObject()) {
-                    // Jackson 3.x: JsonNode.fields() Iterator → properties() Set<Map.Entry> 로 API 변경
-                    for (var entry : root.properties()) {
-                        String genre = entry.getKey().trim();
-                        double score = entry.getValue().asDouble(0.0);
-                        if (genre.isEmpty() || score <= 0.0) {
-                            continue;
-                        }
-                        genreScoreSum.merge(genre, score, Double::sum);
-                        totalScore += score;
+        List<GenrePreference> preferences = genreRows.stream()
+                .map(row -> {
+                    String genre = asString(row.get("genre"));
+                    long count = asLong(row.get("cnt"));
+                    if (genre == null || genre.isBlank() || count <= 0) {
+                        return null;
                     }
-                }
-            } catch (Exception e) {
-                // 파싱 실패는 trace 레벨로 로그하여 정상 흐름을 방해하지 않음
-                log.trace("[admin-stats] genreAffinity 파싱 실패: userId={}",
-                        profile.getUserId());
-            }
-        }
-
-        // 누적 가중치 내림차순 + 상위 8개 추출
-        final double total = totalScore;
-        List<GenrePreference> preferences = genreScoreSum.entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .limit(8)
-                .map(entry -> {
-                    long count = Math.round(entry.getValue() * 100);  // 가중치 *100 → "건수" 표현
-                    double percentage = total > 0
-                            ? Math.round(entry.getValue() / total * 1000.0) / 10.0
+                    double percentage = totalGenreCount > 0
+                            ? Math.round((double) count / totalGenreCount * 1000.0) / 10.0
                             : 0.0;
-                    return new GenrePreference(entry.getKey(), count, percentage);
+                    return new GenrePreference(genre, count, percentage);
                 })
+                .filter(java.util.Objects::nonNull)
+                .limit(8)
                 .toList();
 
-        // ──────────── 2. 시간대별 활동량: User.lastLoginAt 의 시간 분포 ────────────
-        // 24시간 배열 초기화 (0~23시 모두 0)
+        // ──────────── 2. 시간대별 활동량: 기간 내 last_login_at 시간 분포 ────────────
         long[] hourlyCounts = new long[24];
 
-        // User 전체 페이지에서 lastLoginAt 추출 — 너무 많은 사용자를 한 번에 로드하지 않도록 1000건 제한
-        // (MyBatis: Spring Page 대신 List + LIMIT 직접 전달, 설계서 §15)
-        List<User> recentUsers = userMapper.findAllLimited(1000);
-        for (User user : recentUsers) {
-            LocalDateTime lastLogin = user.getLastLoginAt();
-            if (lastLogin != null) {
-                int hour = lastLogin.getHour();
-                if (hour >= 0 && hour < 24) {
-                    hourlyCounts[hour]++;
-                }
+        for (Map<String, Object> row : userMapper.countLastLoginGroupedByHourBetween(start, end)) {
+            int hour = (int) asLong(row.get("hour"));
+            long count = asLong(row.get("cnt"));
+            if (hour >= 0 && hour < 24) {
+                hourlyCounts[hour] = count;
             }
         }
 
@@ -964,8 +936,8 @@ public class AdminStatsService {
             hourly.add(new HourlyActivity(h, hourlyCounts[h]));
         }
 
-        log.debug("[admin-stats] 사용자 행동 집계 완료 — 프로필 {} 건, 장르 {} 종, 사용자 {} 명",
-                profiles.size(), preferences.size(), recentUsers.size());
+        log.debug("[admin-stats] 사용자 행동 집계 완료 — period={}, 장르 {} 종, 시간대 row {}건",
+                period, preferences.size(), hourly.size());
         return new BehaviorResponse(preferences, hourly);
     }
 
@@ -976,23 +948,26 @@ public class AdminStatsService {
     /**
      * 주간 코호트 리텐션 데이터를 반환한다.
      *
-     * <p>User.createdAt으로 주간 코호트를 생성하고, lastLoginAt으로 재방문을 판단한다.</p>
+     * <p>KST 기준 완료된 주차 단위 코호트를 만들고, 이후 주차의 실제 활동 로그
+     * ({@code reviews + event_logs + search_history + chat_session_archive}) 존재 여부로 재방문을 판단한다.</p>
      *
-     * @param weeks 분석할 주간 수 (기본 4)
+     * @param cohortWeeks 최근 몇 개의 코호트를 볼지 (예: 4, 8, 12)
+     * @param horizonWeeks 코호트별 몇 주차까지 유지율을 계산할지 (예: 4, 8)
      * @return 코호트별 리텐션율 히트맵 데이터
      */
-    public RetentionResponse getRetention(int weeks) {
-        LocalDate today = LocalDate.now();
-        List<CohortRow> cohorts = new ArrayList<>();
+    public RetentionResponse getRetention(int cohortWeeks, int horizonWeeks) {
+        int safeCohortWeeks = sanitizeRetentionWeeks(cohortWeeks, 8, 1, 12);
+        int safeHorizonWeeks = sanitizeRetentionWeeks(horizonWeeks, 8, 1, 12);
+        LocalDate currentWeekStart = LocalDate.now(BEHAVIOR_STATS_ZONE)
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        List<CohortRow> cohorts = new ArrayList<>(safeCohortWeeks);
 
-        for (int w = weeks - 1; w >= 0; w--) {
-            /* 코호트 기준 주간의 시작/끝 */
-            LocalDate cohortStart = today.minusWeeks(w + 1);
-            LocalDate cohortEnd = today.minusWeeks(w);
+        for (int offset = safeCohortWeeks - 1; offset >= 0; offset--) {
+            LocalDate cohortStart = currentWeekStart.minusWeeks(offset + 1L);
+            LocalDate cohortEnd = cohortStart.plusWeeks(1);
             LocalDateTime cohortStartDt = cohortStart.atStartOfDay();
             LocalDateTime cohortEndDt = cohortEnd.atStartOfDay();
 
-            /* 해당 주간 가입자 목록 */
             List<User> cohortUsers = userMapper.findByCreatedAtBetween(cohortStartDt, cohortEndDt);
             long cohortSize = cohortUsers.size();
 
@@ -1004,26 +979,53 @@ public class AdminStatsService {
                 continue;
             }
 
-            /* 코호트 사용자 ID 목록 */
             List<String> userIds = cohortUsers.stream()
                     .map(User::getUserId)
-                    .collect(Collectors.toList());
+                    .toList();
 
-            /* 각 후속 주차별 리텐션율 계산 */
-            List<Double> retentionRates = new ArrayList<>();
-            for (int rw = 1; rw <= w + 1 && rw <= 4; rw++) {
-                LocalDateTime rwStart = cohortEndDt.plusWeeks(rw - 1);
-                LocalDateTime rwEnd = cohortEndDt.plusWeeks(rw);
-                long retained = userMapper.countCohortRetention(userIds, rwStart, rwEnd);
-                double rate = Math.round((double) retained / cohortSize * 1000.0) / 10.0;
+            int availableWeeks = (int) ChronoUnit.WEEKS.between(cohortEnd, currentWeekStart);
+            int weeksToCalculate = Math.min(safeHorizonWeeks, Math.max(availableWeeks, 0));
+
+            List<Double> retentionRates = new ArrayList<>(weeksToCalculate);
+            for (int rw = 1; rw <= weeksToCalculate; rw++) {
+                LocalDateTime windowStart = cohortEndDt.plusWeeks(rw - 1L);
+                LocalDateTime windowEnd = cohortEndDt.plusWeeks(rw);
+                long retained = countActiveCohortUsers(userIds, windowStart, windowEnd);
+                double rate = cohortSize > 0
+                        ? Math.round((double) retained / cohortSize * 1000.0) / 10.0
+                        : 0.0;
                 retentionRates.add(rate);
             }
 
             cohorts.add(new CohortRow(weekLabel, cohortSize, retentionRates));
         }
 
-        log.debug("[admin-stats] 리텐션 조회 — {}주 코호트", weeks);
+        log.debug("[admin-stats] 리텐션 조회 — cohortWeeks={}, horizonWeeks={}, cohortCount={}",
+                safeCohortWeeks, safeHorizonWeeks, cohorts.size());
         return new RetentionResponse(cohorts);
+    }
+
+    /** 코호트 사용자 중 지정 기간 내 실제 활동이 있었던 고유 사용자 수를 계산한다. */
+    private long countActiveCohortUsers(List<String> userIds, LocalDateTime start, LocalDateTime end) {
+        if (userIds == null || userIds.isEmpty()) {
+            return 0L;
+        }
+
+        Set<String> activeUserIds = new HashSet<>();
+        activeUserIds.addAll(reviewMapper.findDistinctUserIdsByUserIdsAndCreatedAtBetween(userIds, start, end));
+        activeUserIds.addAll(eventLogRepository.findDistinctUserIdsByUserIdInAndCreatedAtBetween(userIds, start, end));
+        activeUserIds.addAll(searchHistoryRepository.findDistinctUserIdsByUserIdInAndSearchedAtBetween(userIds, start, end));
+        activeUserIds.addAll(adminChatSessionRepository.findDistinctUserIdsByUserIdInAndCreatedAtBetween(userIds, start, end));
+        activeUserIds.removeIf(userId -> userId == null || userId.isBlank());
+        return activeUserIds.size();
+    }
+
+    /** 리텐션 파라미터를 안전한 범위로 보정한다. */
+    private int sanitizeRetentionWeeks(Integer value, int defaultValue, int min, int max) {
+        if (value == null) {
+            return defaultValue;
+        }
+        return Math.min(Math.max(value, min), max);
     }
 
     // ──────────────────────────────────────────────

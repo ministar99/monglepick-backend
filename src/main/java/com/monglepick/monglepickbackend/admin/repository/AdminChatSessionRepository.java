@@ -182,6 +182,22 @@ public interface AdminChatSessionRepository extends JpaRepository<ChatSessionArc
             @Param("end") LocalDateTime end
     );
 
+    /**
+     * 특정 사용자 목록 중 지정 기간 내 AI 채팅을 사용한 고유 사용자 ID 목록을 반환한다.
+     */
+    @Query("""
+            SELECT DISTINCT c.userId
+            FROM ChatSessionArchive c
+            WHERE c.userId IN :userIds
+              AND c.createdAt >= :start
+              AND c.createdAt < :end
+            """)
+    List<String> findDistinctUserIdsByUserIdInAndCreatedAtBetween(
+            @Param("userIds") java.util.Collection<String> userIds,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end
+    );
+
     // ══════════════════════════════════════════════
     // AI 서비스 통계 V2 — 운영 통계용 (소프트 삭제 무시)
     //
