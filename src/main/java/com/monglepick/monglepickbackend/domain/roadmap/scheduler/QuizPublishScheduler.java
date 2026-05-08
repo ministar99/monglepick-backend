@@ -117,9 +117,9 @@ public class QuizPublishScheduler {
             return 0;
         }
 
-        // ── 후보 조회 ── APPROVED + quiz_date IS NULL 중 가장 오래된 1건 (FIFO).
+        // ── 후보 조회 ── APPROVED + (quiz_date IS NULL OR quiz_date <= 오늘) 중 가장 오래된 1건 (FIFO).
         Optional<Quiz> candidate = adminQuizRepository
-                .findFirstByStatusAndQuizDateIsNullOrderByCreatedAtAsc(Quiz.QuizStatus.APPROVED);
+                .findFirstPublishableByStatus(Quiz.QuizStatus.APPROVED, today);
 
         if (candidate.isEmpty()) {
             // 검수 적체 — 운영자가 PENDING 을 검수해야 할 신호.

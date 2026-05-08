@@ -169,15 +169,23 @@ public interface AdminQuizRepository extends JpaRepository<Quiz, Long> {
     boolean existsByStatusAndQuizDate(Quiz.QuizStatus status, LocalDate quizDate);
 
     /**
-     * APPROVED + quiz_date IS NULL 퀴즈 중 가장 오래된 1건 조회 — 자동 발행 후보.
+     * 발행 가능한 APPROVED 퀴즈 중 가장 오래된 1건 조회 — 자동/수동 발행 후보.
      *
-     * <p>FIFO 원칙: 검수 통과한 후 가장 오래 대기 중인 퀴즈를 우선 노출한다.
+     * <p>후보 조건: APPROVED + (quiz_date IS NULL OR quiz_date <= today).
+     * quiz_date 가 null(즉시 출제 가능)이거나 오늘/과거 날짜가 이미 세팅된 퀴즈를
+     * 모두 포함한다. 미래 날짜 예약 퀴즈는 제외하여 스케줄을 보호한다.</p>
+     *
+     * <p>FIFO 원칙: created_at ASC 정렬로 가장 오래 대기한 퀴즈를 우선 발행.
      * 후보가 없으면 {@link Optional#empty()} 반환 — 호출자가 warn 로그 처리.</p>
      *
-     * <p>JPA 메서드 명명 규약을 사용해 별도 @Query 없이도 안전하게 LIMIT 1 처리된다.</p>
-     *
      * @param status APPROVED 가정
-     * @return 자동 발행 후보 1건 (없으면 empty)
+     * @param today  오늘 날짜 (quiz_date 상한선, KST)
+     * @return 발행 후보 1건 (없으면 empty)
      */
-    Optional<Quiz> findFirstByStatusAndQuizDateIsNullOrderByCreatedAtAsc(Quiz.QuizStatus status);
+    @Query("SELECT q FROM Quiz q WHERE q.status = :status " +
+           "AND (q.quizDate IS NULL OR q.quizDate <= :today) " +
+           "ORDER BY q.createdAt ASC")
+    Optional<Quiz> findFirstPublishableByStatus(
+            @Param("status") Quiz.QuizStatus status,
+            @Param("today") LocalDate today);
 }
