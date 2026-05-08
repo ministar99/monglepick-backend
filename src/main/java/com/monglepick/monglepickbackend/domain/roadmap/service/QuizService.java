@@ -13,9 +13,13 @@ import com.monglepick.monglepickbackend.domain.reward.constants.PointItemType;
 import com.monglepick.monglepickbackend.domain.reward.service.UserItemService;
 import com.monglepick.monglepickbackend.domain.roadmap.entity.Quiz;
 import com.monglepick.monglepickbackend.domain.roadmap.entity.QuizParticipation;
+import com.monglepick.monglepickbackend.domain.movie.entity.Movie;
+import com.monglepick.monglepickbackend.domain.movie.repository.MovieRepository;
 import com.monglepick.monglepickbackend.domain.roadmap.repository.QuizParticipationRepository;
 import com.monglepick.monglepickbackend.domain.roadmap.repository.QuizRepository;
 import com.monglepick.monglepickbackend.domain.reward.service.RewardService;
+import com.monglepick.monglepickbackend.global.dto.AchievementAwareResponse;
+import com.monglepick.monglepickbackend.global.dto.UnlockedAchievementResponse;
 import com.monglepick.monglepickbackend.global.exception.BusinessException;
 import com.monglepick.monglepickbackend.global.exception.ErrorCode;
 import com.monglepick.monglepickbackend.domain.roadmap.service.AchievementService;
@@ -28,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -89,6 +94,9 @@ public class QuizService {
     /** 사용자 보유 아이템 서비스 — QUIZ_HINT 아이템 소비 */
     private final UserItemService userItemService;
 
+    /** 영화 리포지토리 — 퀴즈 카드 포스터/제목 조회용 */
+    private final MovieRepository movieRepository;
+
     /**
      * JSON 파싱용 ObjectMapper (스레드 안전, 클래스 로딩 시 1회 초기화).
      * Quiz.options JSON 컬럼(예: ["선택지A","선택지B"])을 List&lt;String&gt;으로 역직렬화할 때 사용한다.
@@ -98,6 +106,23 @@ public class QuizService {
     // ────────────────────────────────────────────────────────────────
     // 퀴즈 목록 조회
     // ────────────────────────────────────────────────────────────────
+
+    /**
+     * 퀴즈 목록에서 movieId 를 모아 한 번에 Movie 를 조회한다 (N+1 방지).
+     *
+     * @param quizzes 퀴즈 목록
+     * @return movieId → Movie 맵 (movieId 가 null 이거나 DB 에 없는 경우 해당 키 없음)
+     */
+    private java.util.Map<String, Movie> fetchMovieMap(List<Quiz> quizzes) {
+        List<String> movieIds = quizzes.stream()
+                .map(Quiz::getMovieId)
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .toList();
+        if (movieIds.isEmpty()) return java.util.Collections.emptyMap();
+        return movieRepository.findAllById(movieIds).stream()
+                .collect(java.util.stream.Collectors.toMap(Movie::getMovieId, m -> m));
+    }
 
     /**
      * 특정 영화의 PUBLISHED 퀴즈 목록을 조회한다.
@@ -119,12 +144,17 @@ public class QuizService {
                 ? participationRepository.findAttemptedQuizIdsByUserId(userId)
                 : java.util.Collections.emptySet();
 
+        java.util.Map<String, Movie> movieMap = fetchMovieMap(quizzes);
+
         return quizzes.stream()
                 .map(quiz -> {
                     List<String> opts = parseOptions(quiz.getOptions());
+                    Movie movie = quiz.getMovieId() != null ? movieMap.get(quiz.getMovieId()) : null;
+                    String title = movie != null ? movie.getTitle() : null;
+                    String poster = movie != null ? movie.getPosterPath() : null;
                     return (userId != null)
-                            ? QuizResponse.from(quiz, opts, attempted.contains(quiz.getQuizId()))
-                            : QuizResponse.from(quiz, opts);
+                            ? QuizResponse.from(quiz, opts, title, poster, attempted.contains(quiz.getQuizId()))
+                            : QuizResponse.from(quiz, opts, title, poster);
                 })
                 .toList();
     }
@@ -149,12 +179,17 @@ public class QuizService {
                 ? participationRepository.findAttemptedQuizIdsByUserId(userId)
                 : java.util.Collections.emptySet();
 
+        java.util.Map<String, Movie> movieMap = fetchMovieMap(quizzes);
+
         return quizzes.stream()
                 .map(quiz -> {
                     List<String> opts = parseOptions(quiz.getOptions());
+                    Movie movie = quiz.getMovieId() != null ? movieMap.get(quiz.getMovieId()) : null;
+                    String title = movie != null ? movie.getTitle() : null;
+                    String poster = movie != null ? movie.getPosterPath() : null;
                     return (userId != null)
-                            ? QuizResponse.from(quiz, opts, attempted.contains(quiz.getQuizId()))
-                            : QuizResponse.from(quiz, opts);
+                            ? QuizResponse.from(quiz, opts, title, poster, attempted.contains(quiz.getQuizId()))
+                            : QuizResponse.from(quiz, opts, title, poster);
                 })
                 .toList();
     }
@@ -169,9 +204,16 @@ public class QuizService {
     public List<QuizResponse> getAllPublishedQuizzes() {
         log.debug("전체 PUBLISHED 퀴즈 목록 조회");
 
-        return quizRepository.findByStatus(Quiz.QuizStatus.PUBLISHED)
-                .stream()
-                .map(quiz -> QuizResponse.from(quiz, parseOptions(quiz.getOptions())))
+        List<Quiz> quizzes = quizRepository.findByStatus(Quiz.QuizStatus.PUBLISHED);
+        java.util.Map<String, Movie> movieMap = fetchMovieMap(quizzes);
+
+        return quizzes.stream()
+                .map(quiz -> {
+                    Movie movie = quiz.getMovieId() != null ? movieMap.get(quiz.getMovieId()) : null;
+                    String title = movie != null ? movie.getTitle() : null;
+                    String poster = movie != null ? movie.getPosterPath() : null;
+                    return QuizResponse.from(quiz, parseOptions(quiz.getOptions()), title, poster);
+                })
                 .toList();
     }
 
@@ -205,6 +247,11 @@ public class QuizService {
      */
     @Transactional
     public SubmitResponse submitAnswer(String userId, Long quizId, SubmitRequest request) {
+        return submitAnswerWithAchievements(userId, quizId, request).data();
+    }
+
+    @Transactional
+    public AchievementAwareResponse<SubmitResponse> submitAnswerWithAchievements(String userId, Long quizId, SubmitRequest request) {
         // ① 퀴즈 존재 및 PUBLISHED 상태 확인
         Quiz quiz = quizRepository.findById(quizId)
                 .filter(q -> q.getStatus() == Quiz.QuizStatus.PUBLISHED)
@@ -252,18 +299,22 @@ public class QuizService {
         if (isCorrect && !alreadyCorrect) {
             grantQuizReward(userId, quizId);
             // quiz_perfect 업적 — 최초 퀴즈 정답 달성 시 1회 지급
+            List<UnlockedAchievementResponse> unlockedAchievements = new ArrayList<>();
             try {
-                achievementService.checkAndGrant(userId, "quiz_perfect", "default");
+                achievementService.checkAndGrant(userId, "quiz_perfect", "default")
+                        .ifPresent(unlockedAchievements::add);
             } catch (Exception e) {
                 log.warn("quiz_perfect 업적 체크 실패 (퀴즈 제출은 정상 처리): userId={}, quizId={}, error={}",
                         userId, quizId, e.getMessage());
             }
+            return AchievementAwareResponse.of(
+                    new SubmitResponse(isCorrect, quiz.getExplanation(), quiz.getRewardPoint()),
+                    unlockedAchievements
+            );
         }
 
         // ⑦ 응답 반환 — rewardPoint는 정답 최초 지급인 경우에만 실제 값, 나머지는 0
-        int awardedPoint = (isCorrect && !alreadyCorrect) ? quiz.getRewardPoint() : 0;
-
-        return new SubmitResponse(isCorrect, quiz.getExplanation(), awardedPoint);
+        return AchievementAwareResponse.of(new SubmitResponse(isCorrect, quiz.getExplanation(), 0));
     }
 
     // ────────────────────────────────────────────────────────────────
