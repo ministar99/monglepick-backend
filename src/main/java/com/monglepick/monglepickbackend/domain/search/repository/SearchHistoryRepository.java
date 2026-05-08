@@ -163,4 +163,20 @@ public interface SearchHistoryRepository extends JpaRepository<SearchHistory, Lo
      * @return 해당 resultCount와 일치하는 검색 이력 수
      */
     long countByResultCount(int resultCount);
+
+    /**
+     * 특정 사용자 목록 중 지정 기간 내 검색/클릭 이력이 있는 고유 사용자 ID 목록을 반환한다.
+     */
+    @Query("""
+            SELECT DISTINCT sh.userId
+            FROM SearchHistory sh
+            WHERE sh.userId IN :userIds
+              AND sh.searchedAt >= :start
+              AND sh.searchedAt < :end
+            """)
+    List<String> findDistinctUserIdsByUserIdInAndSearchedAtBetween(
+            @Param("userIds") Collection<String> userIds,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end
+    );
 }

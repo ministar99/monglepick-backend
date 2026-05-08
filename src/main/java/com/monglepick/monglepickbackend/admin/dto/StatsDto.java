@@ -292,8 +292,8 @@ public class StatsDto {
     /**
      * 사용자 행동 패턴 분석 응답.
      *
-     * @param genrePreferences 장르 선호도 분포 (reviews + movies JOIN 기반, watch_history 폐기)
-     * @param hourlyActivity   시간대별 활동량 (0~23시)
+     * @param genrePreferences 선택 기간 내 리뷰 기준 장르 선호도 분포
+     * @param hourlyActivity   선택 기간 내 마지막 로그인 시간대 분포 (0~23시)
      */
     public record BehaviorResponse(
             List<GenrePreference> genrePreferences,
@@ -303,12 +303,11 @@ public class StatsDto {
     /**
      * 장르별 사용자 선호도 단건.
      *
-     * <p>"리뷰 작성 = 시청 완료" 단일 진실 원본 원칙에 따라 reviews 테이블의
-     * movie_id를 movies 테이블과 JOIN하여 장르를 집계해야 한다 (현재는 mock).
-     * watch_history 도메인은 폐기되었다 (2026-04-08).</p>
+     * <p>"리뷰 작성 = 시청 완료" 단일 진실 원본 원칙에 따라
+     * 선택 기간 내 reviews.movie_id 를 movies.genres 와 결합해 집계한다.</p>
      *
      * @param genre      장르명
-     * @param count      해당 장르 시청 건수
+     * @param count      해당 장르 리뷰 기반 집계 건수
      * @param percentage 전체 대비 비율 (0.0~100.0)
      */
     public record GenrePreference(
@@ -321,7 +320,7 @@ public class StatsDto {
      * 시간대별 활동량 단건.
      *
      * @param hour  시간 (0~23)
-     * @param count 해당 시간대 활동 수 (로그인, 검색, 추천 등 합산)
+     * @param count 해당 시간대 마지막 로그인 사용자 수
      */
     public record HourlyActivity(
             int hour,

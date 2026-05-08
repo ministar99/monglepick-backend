@@ -118,6 +118,19 @@ public interface ReviewMapper {
     long countByCreatedAtBetween(@Param("start") LocalDateTime start,
                                   @Param("end") LocalDateTime end);
 
+    /**
+     * 지정 기간 내 리뷰의 영화 장르 분포를 집계한다.
+     *
+     * <p>reviews.movie_id 를 movies.genres(JSON 배열)와 결합해 장르별 건수를 계산한다.
+     * 소프트 삭제 리뷰는 제외한다.</p>
+     *
+     * @param start 기간 시작 시각
+     * @param end   기간 종료 시각
+     * @return [{genre, cnt}] 형태의 맵 리스트 (cnt 내림차순)
+     */
+    List<Map<String, Object>> countGenresByCreatedAtBetween(@Param("start") LocalDateTime start,
+                                                             @Param("end") LocalDateTime end);
+
     /** 전체 리뷰의 평균 평점 (리뷰 없으면 null) */
     Double findAverageRating();
 
@@ -189,6 +202,17 @@ public interface ReviewMapper {
      */
     long countDistinctUserByCreatedAtBetween(@Param("start") LocalDateTime start,
                                               @Param("end") LocalDateTime end);
+
+    /**
+     * 특정 사용자 목록 중 지정 기간 내 리뷰를 작성한 고유 사용자 ID 목록을 반환한다.
+     *
+     * <p>코호트 리텐션의 "실제 활동" 판정에 사용한다. 소프트 삭제 리뷰는 제외한다.</p>
+     */
+    List<String> findDistinctUserIdsByUserIdsAndCreatedAtBetween(
+            @Param("userIds") List<String> userIds,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end
+    );
 
     // ═══ 내 리뷰 목록 조회 — 고객센터 AI 봇 진단용 (v4 신규, 2026-04-28) ═══
 
