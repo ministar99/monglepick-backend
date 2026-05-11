@@ -238,20 +238,57 @@ public final class PointDto {
     // ──────────────────────────────────────────────
 
     /**
+     * 출석 보너스 단건 응답 (2026-05-11 신설).
+     *
+     * <p>마일스톤 보너스 한 건의 표시 정보를 담는다. AttendanceResponse.bonuses 의 원소.
+     * 클라이언트는 actionType 으로 보너스 종류를 식별하고 activityName 을 라벨로,
+     * points 를 우측 금액으로 표시한다.</p>
+     *
+     * @param actionType   정책 코드 (예: "ATTENDANCE_STREAK_7")
+     * @param activityName 보너스 한국어 이름 (예: "7일 연속 출석")
+     * @param points       이 보너스로 지급된 포인트
+     */
+    public record BonusItemResponse(
+            String actionType,
+            String activityName,
+            int points
+    ) {
+    }
+
+    /**
      * 출석 체크 응답.
      *
-     * <p>출석 체크 성공 시 출석일, 연속 출석일수, 획득한 포인트, 현재 잔액을 반환한다.</p>
+     * <p>출석 체크 성공 시 출석일, 연속 출석일수, 총/기본 적립 포인트, 마일스톤 보너스 내역을
+     * 반환한다.</p>
+     *
+     * <h3>2026-05-11 — 마일스톤 보너스 합산 필드 추가</h3>
+     * <p>이전 버전은 {@code earnedPoints} 단일 필드에 기본 출석 포인트만 담아 streak 보너스
+     * (7/15/30일 50/100/300P) 가 누락되는 정합성 결함이 있었다(7일째 출석 시 실제 60P 가
+     * 적립되지만 UI 는 +10P 만 표시). 새 필드 구성:</p>
+     * <ul>
+     *   <li>{@code totalEarned} — 기본 + 모든 보너스 합계. UI 헤더 "+nP 적립!" 에 사용</li>
+     *   <li>{@code baseEarned}  — ATTENDANCE_BASE 본 정책의 지급액(등급 배율 적용). 내역 첫 줄용</li>
+     *   <li>{@code bonuses}     — 마일스톤/등급승격 보너스 내역. 내역 추가 줄</li>
+     *   <li>{@code earnedPoints} — 하위 호환을 위해 {@code totalEarned} 와 동일 값으로 유지(Deprecated).
+     *       새 클라이언트는 {@code totalEarned} 사용 권장</li>
+     * </ul>
      *
      * @param checkDate      출석 체크 날짜
      * @param streakCount    연속 출석일 수 (1 이상)
-     * @param earnedPoints   이번 출석으로 획득한 포인트 (기본 10P + 보너스)
-     * @param currentBalance 출석 보상 지급 후 현재 보유 포인트
+     * @param earnedPoints   [Deprecated 2026-05-11] {@code totalEarned} 와 동일. 신규 코드는 사용 금지
+     * @param currentBalance [Deprecated] 항상 0 — 클라이언트가 별도 loadBalance() 호출로 갱신
+     * @param totalEarned    기본 + 모든 보너스 합계 (UI "+nP" 표시용)
+     * @param baseEarned     ATTENDANCE_BASE 본 정책 지급액 (등급 배율 적용된 값)
+     * @param bonuses        마일스톤/등급승격 보너스 내역 (없으면 빈 리스트)
      */
     public record AttendanceResponse(
             LocalDate checkDate,
             int streakCount,
             int earnedPoints,
-            int currentBalance
+            int currentBalance,
+            int totalEarned,
+            int baseEarned,
+            List<BonusItemResponse> bonuses
     ) {
     }
 
@@ -260,16 +297,23 @@ public final class PointDto {
      *
      * <p>클라이언트의 출석 체크 화면에서 캘린더 표시 및 현황 요약에 사용된다.</p>
      *
-     * @param currentStreak 현재 연속 출석일 수 (연속 끊기면 0)
-     * @param totalDays     누적 총 출석 일수
-     * @param checkedToday  오늘 출석 완료 여부 (true: 출석 완료, false: 미출석)
-     * @param monthlyDates  이번 달 출석한 날짜 목록 (캘린더 표시용)
+     * <h3>2026-05-11 — month 필드 추가</h3>
+     * <p>이전달 조회를 위해 응답이 어느 달을 표현하는지 명시한다(YYYY-MM 형식). 클라이언트가
+     * 요청한 달과 응답이 일치하는지 검증하거나, 비동기 응답 race condition 발생 시 가장
+     * 최근 응답이 현재 보고 있는 달과 다르면 폐기할 수 있게 한다.</p>
+     *
+     * @param currentStreak 현재 연속 출석일 수 (연속 끊기면 0) — 사용자 현재 상태 (조회 월과 무관)
+     * @param totalDays     누적 총 출석 일수 (조회 월과 무관)
+     * @param checkedToday  오늘 출석 완료 여부 (조회 월과 무관)
+     * @param monthlyDates  조회 대상 달의 출석 날짜 목록 (캘린더 표시용)
+     * @param month         응답이 표현하는 달 (YYYY-MM, 클라이언트 검증용)
      */
     public record AttendanceStatusResponse(
             int currentStreak,
             int totalDays,
             boolean checkedToday,
-            List<LocalDate> monthlyDates
+            List<LocalDate> monthlyDates,
+            String month
     ) {
     }
 

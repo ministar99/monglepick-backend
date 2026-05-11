@@ -2,6 +2,8 @@ package com.monglepick.monglepickbackend.domain.reward.service;
 
 import com.monglepick.monglepickbackend.domain.reward.dto.PointDto.AttendanceResponse;
 import com.monglepick.monglepickbackend.domain.reward.dto.PointDto.AttendanceStatusResponse;
+import com.monglepick.monglepickbackend.domain.reward.dto.PointDto.BonusItemResponse;
+import com.monglepick.monglepickbackend.domain.reward.dto.RewardResult;
 import com.monglepick.monglepickbackend.domain.reward.entity.UserActivityProgress;
 import com.monglepick.monglepickbackend.domain.reward.entity.UserAttendance;
 import com.monglepick.monglepickbackend.domain.reward.repository.UserActivityProgressRepository;
@@ -14,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Optional;
 
@@ -156,25 +159,41 @@ public class AttendanceService {
         }
 
         // 5. 리워드 서비스 연동 — ATTENDANCE_BASE 정책 기반 포인트 지급
-        //    - 기본 출석 포인트 (reward_policy.points_amount)
+        //    - 기본 출석 포인트 (reward_policy.points_amount, 등급 배율 적용)
         //    - streak 마일스톤 보너스 (7일/15일/30일 threshold 달성 시 연쇄 지급)
-        //    - 등급 배율 자동 적용 (BRONZE=1.0x ~ PLATINUM=2.0x)
+        //    - 등급 자동 칭호/등급 승격 보너스는 GRADE_UP_* 정책 경로로 처리
         //    - referenceId: "date_YYYY-MM-DD" 형식으로 날짜별 중복 방지
-        //    ※ 기존 pointService.earnPoint() 직접 호출(하드코딩 10P/30P/60P)은
-        //      이중 지급 방지를 위해 제거하고 이 한 줄로 대체한다.
-        //    ※ grantReward()는 REQUIRES_NEW 트랜잭션으로 실행되어 즉시 커밋되므로
-        //      반환된 RewardResult에서 실제 지급 포인트를 읽어 응답에 포함한다.
-        var rewardResult = rewardService.grantReward(userId, "ATTENDANCE_BASE", "date_" + today, 0);
-        int earnedPoints = rewardResult.points();
+        //
+        //    2026-05-11 합산 정책: grantReward() 는 RewardResult.bonuses 에 자식 마일스톤 결과를
+        //    누적해 반환하므로 한 번의 호출만으로 본인 + 모든 보너스 정보를 얻는다.
+        RewardResult rewardResult = rewardService.grantReward(userId, "ATTENDANCE_BASE", "date_" + today, 0);
 
-        log.info("출석 체크 완료: userId={}, streak={}, earnedPoints={}P", userId, streak, earnedPoints);
+        // 6. 응답 필드 추출
+        //    baseEarned  : 본 정책 지급액 (등급 배율 적용)
+        //    bonuses     : 마일스톤/승격 보너스 내역 — UI 내역 표시
+        //    totalEarned : 본인 + 모든 보너스 합계 — UI "+nP 적립!" 헤더
+        int baseEarned = rewardResult.points();
+        List<BonusItemResponse> bonusItems = rewardResult.bonuses().stream()
+                .map(b -> new BonusItemResponse(b.actionType(), b.policyName(), b.points()))
+                .toList();
+        int totalEarned = rewardResult.totalPoints();
 
-        // 6. 출석 응답 반환
-        //    earnedPoints: grantReward() 반환값 (기본 출석 포인트, 등급 배율 적용)
-        //    currentBalance: 0 — 클라이언트가 별도 loadBalance() 호출로 갱신하므로 0 반환
-        //    ※ streak 보너스(7/15/30일)는 checkThresholdRewards()에서 별도 지급되어
-        //      earnedPoints에 미포함. 포인트 이력에서 확인 가능.
-        return new AttendanceResponse(today, streak, earnedPoints, 0);
+        log.info("출석 체크 완료: userId={}, streak={}, baseEarned={}P, bonuses={}, totalEarned={}P",
+                userId, streak, baseEarned, bonusItems.size(), totalEarned);
+
+        // 7. 출석 응답 반환
+        //    earnedPoints: [Deprecated] totalEarned 와 동일 값을 유지 — 구 클라이언트 호환
+        //    currentBalance: [Deprecated] 0 — 클라이언트가 별도 loadBalance() 호출로 갱신
+        //    totalEarned/baseEarned/bonuses: 신규 클라이언트가 합계+내역을 표시하기 위한 필드
+        return new AttendanceResponse(
+                today,
+                streak,
+                totalEarned,     // earnedPoints (Deprecated, 동일 값)
+                0,               // currentBalance (Deprecated)
+                totalEarned,
+                baseEarned,
+                bonusItems
+        );
     }
 
     // ──────────────────────────────────────────────
@@ -182,31 +201,57 @@ public class AttendanceService {
     // ──────────────────────────────────────────────
 
     /**
-     * 사용자의 출석 현황을 조회한다.
+     * 사용자의 출석 현황(현재 달)을 조회한다 — 기존 호출 호환용 단축 메서드.
      *
-     * <p>클라이언트의 출석 체크 화면에서 다음 정보를 표시하기 위해 사용된다:</p>
+     * <p>{@link #getStatus(String, YearMonth)} 에 {@code null} 을 위임하여 현재 달을 조회한다.
+     * 기존 컨트롤러/서비스 호출이 그대로 동작하도록 유지된다.</p>
+     *
+     * @param userId 사용자 ID
+     * @return 출석 현황 (연속일수, 총일수, 오늘출석여부, 현재 달 날짜목록, "YYYY-MM")
+     */
+    public AttendanceStatusResponse getStatus(String userId) {
+        return getStatus(userId, null);
+    }
+
+    /**
+     * 사용자의 출석 현황을 조회한다 — 대상 달 지정 가능 (2026-05-11 신설).
+     *
+     * <p>클라이언트의 달력 UI 에서 이전 달로 이동해도 그 달의 출석 기록을 표시할 수 있게 한다.
+     * 통계 필드(currentStreak/totalDays/checkedToday) 는 조회 대상 달과 무관하게 항상 사용자의
+     * 현재 상태를 그대로 반환한다 — 이전 달을 보고 있어도 헤더의 "연속 X일/총 Y일" 표시는
+     * 의미를 유지해야 하기 때문이다. {@code monthlyDates} 만 대상 달로 한정한다.</p>
+     *
+     * <h4>대상 달 결정</h4>
      * <ul>
-     *   <li>현재 연속 출석일 (currentStreak)</li>
-     *   <li>누적 총 출석 일수 (totalDays)</li>
-     *   <li>오늘 출석 여부 (checkedToday)</li>
-     *   <li>이번 달 출석한 날짜 목록 (monthlyDates — 캘린더 표시용)</li>
+     *   <li>{@code target == null} → 현재 달 (오늘 기준)</li>
+     *   <li>{@code target} 지정 → 해당 달 (단, 미래 월은 400)</li>
      * </ul>
      *
-     * <h4>연속 출석일 계산 로직</h4>
+     * <h4>예외</h4>
      * <ul>
-     *   <li>마지막 출석일 == 오늘 → streak = 해당 레코드의 streakCount</li>
-     *   <li>마지막 출석일 == 어제 → streak = 해당 레코드의 streakCount (내일 출석 시 이어짐)</li>
-     *   <li>그 외 → streak = 0 (연속 끊김)</li>
+     *   <li>{@code target} 이 미래 달이면 {@link BusinessException}(INVALID_REQUEST)
+     *       — 클라이언트는 미래 월 버튼을 비활성화해야 한다.</li>
      * </ul>
      *
      * @param userId 사용자 ID
-     * @return 출석 현황 (연속일수, 총일수, 오늘출석여부, 월간날짜목록)
+     * @param target 조회 대상 달 (null 이면 현재 달)
+     * @return 출석 현황 (통계 + 대상 달의 monthlyDates + "YYYY-MM" 식별자)
      */
-    public AttendanceStatusResponse getStatus(String userId) {
+    public AttendanceStatusResponse getStatus(String userId, YearMonth target) {
         LocalDate today = LocalDate.now();
-        log.debug("출석 현황 조회: userId={}", userId);
+        YearMonth currentMonth = YearMonth.from(today);
+        YearMonth effectiveTarget = (target == null) ? currentMonth : target;
 
-        // 현재 연속 출석일(streak) 및 오늘 출석 여부 계산
+        /* 미래 달 요청 차단 — 출석 기록이 존재할 수 없는 미래 시점은 클라이언트 버그/조작 신호.
+         * INVALID_INPUT(G002, 400) 으로 거부하여 클라이언트가 잘못된 파라미터임을 인지하게 한다. */
+        if (effectiveTarget.isAfter(currentMonth)) {
+            log.warn("미래 달 출석 조회 거부: userId={}, target={}", userId, effectiveTarget);
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        log.debug("출석 현황 조회: userId={}, target={}", userId, effectiveTarget);
+
+        // 현재 연속 출석일(streak) 및 오늘 출석 여부 계산 — 대상 달과 무관, 사용자 현재 상태
         Optional<UserAttendance> latest =
                 attendanceRepository.findTopByUserIdOrderByCheckDateDesc(userId);
         int currentStreak = 0;
@@ -226,21 +271,27 @@ public class AttendanceService {
             // 그 외: streak = 0 (연속 끊김)
         }
 
-        // 총 출석 일수 집계
+        // 총 출석 일수 집계 (대상 달과 무관)
         long totalDays = attendanceRepository.countByUserId(userId);
 
-        // 이번 달 출석 날짜 목록 (캘린더 표시용)
-        LocalDate monthStart = today.withDayOfMonth(1);
-        LocalDate monthEnd = today.withDayOfMonth(today.lengthOfMonth());
+        // 대상 달의 출석 날짜 목록 (캘린더 표시용)
+        LocalDate monthStart = effectiveTarget.atDay(1);
+        LocalDate monthEnd = effectiveTarget.atEndOfMonth();
         List<LocalDate> monthlyDates = attendanceRepository
                 .findByUserIdAndCheckDateBetween(userId, monthStart, monthEnd)
                 .stream()
                 .map(UserAttendance::getCheckDate)
                 .toList();
 
-        log.debug("출석 현황: userId={}, streak={}, totalDays={}, checkedToday={}, monthlyCount={}",
-                userId, currentStreak, totalDays, checkedToday, monthlyDates.size());
+        log.debug("출석 현황: userId={}, target={}, streak={}, totalDays={}, checkedToday={}, monthlyCount={}",
+                userId, effectiveTarget, currentStreak, totalDays, checkedToday, monthlyDates.size());
 
-        return new AttendanceStatusResponse(currentStreak, (int) totalDays, checkedToday, monthlyDates);
+        return new AttendanceStatusResponse(
+                currentStreak,
+                (int) totalDays,
+                checkedToday,
+                monthlyDates,
+                effectiveTarget.toString()   // "YYYY-MM" — YearMonth.toString() 가 ISO 형식
+        );
     }
 }

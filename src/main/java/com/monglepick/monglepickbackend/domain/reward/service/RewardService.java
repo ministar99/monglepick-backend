@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -177,9 +178,12 @@ public class RewardService {
                 progress.incrementTotalCount();
                 progress.incrementDailyCount();
                 progress.updateLastActionAt();
-                /* threshold 달성 여부는 여전히 확인 (활동은 발생했으므로) */
-                checkThresholdRewards(userId, actionType, progress);
-                return RewardResult.EMPTY;
+                /* threshold 달성 여부는 여전히 확인 (활동은 발생했으므로).
+                 * 2026-05-11: 본 정책이 미지급이어도 자식 마일스톤은 달성됐을 수 있으므로
+                 * 호출자에게 bonuses 를 전달한다. 예: 출석 본 정책의 dailyLimit=1 로 이미 받은
+                 * 적이 있어도 streak 마일스톤은 별도 정책이라 같은 흐름에서 따로 처리된다. */
+                List<RewardResult> bonusOnly = checkThresholdRewards(userId, actionType, progress);
+                return RewardResult.of(0, policy.getActivityName(), actionType, bonusOnly);
             }
 
             /* ⑥ 등급 배율 적용
@@ -220,27 +224,39 @@ public class RewardService {
                 progress.incrementRewardedTotalCount();
             }
 
-            /* ⑨ threshold 달성 정책 연쇄 확인
+            /* ⑨ threshold 달성 정책 연쇄 확인 + 자식 보너스 결과 수집
              *    parent_action_type = actionType인 자식 정책들의 달성 여부를 확인하고
-             *    달성 시 보너스 지급 (재귀 호출). 자식 정책의 parent=NULL이므로 무한 재귀 불가. */
-            checkThresholdRewards(userId, actionType, progress);
+             *    달성 시 보너스 지급 (재귀 호출). 자식 정책의 parent=NULL이므로 무한 재귀 불가.
+             *
+             *    2026-05-11: 자식 보너스의 RewardResult 를 모아 본 응답의 bonuses 에 합친다.
+             *    출석 시 ATTENDANCE_STREAK_7/15/30 같은 마일스톤이 발동하면 호출자
+             *    (AttendanceService) 가 단일 응답으로 모든 보너스 내역을 클라이언트에 노출할 수 있게 한다. */
+            List<RewardResult> bonusResults = new ArrayList<>(checkThresholdRewards(userId, actionType, progress));
 
             /* ⑩ 등급 승격 보너스 — earnPoint 결과에서 등급 변경을 감지하여 GRADE_UP_* 지급.
              *    GRADE_UP_* 정책의 max_count=1이므로 중복 지급 불가.
-             *    추가로 등급 자동 칭호({@code TITLE_GENERIC}) 도 함께 발급한다 (2026-04-28 v3.5). */
+             *    추가로 등급 자동 칭호({@code TITLE_GENERIC}) 도 함께 발급한다 (2026-04-28 v3.5).
+             *
+             *    2026-05-11: 승격 보너스 결과도 bonuses 에 누적해 호출자에 노출한다. */
             if (previousGrade != null && currentGrade != null
                     && !currentGrade.equals(previousGrade)) {
                 String gradeUpAction = "GRADE_UP_" + currentGrade;
                 log.info("등급 승격 감지 → 보너스 지급 시도: userId={}, {} → {}, actionType={}",
                         userId, previousGrade, currentGrade, gradeUpAction);
-                grantReward(userId, gradeUpAction, "grade_" + currentGrade + "_" + userId, 0);
+                RewardResult gradeUpResult = grantReward(userId, gradeUpAction, "grade_" + currentGrade + "_" + userId, 0);
+                /* 실제 지급된 경우에만 bonuses 에 추가 — EMPTY 는 노이즈 */
+                if (gradeUpResult != null && gradeUpResult.earned()) {
+                    bonusResults.add(gradeUpResult);
+                }
 
                 /* 등급 자동 칭호 지급 — REQUIRES_NEW 라 본 트랜잭션과 분리. 실패 무영향. */
                 gradeTitleService.grantTitleForGrade(userId, currentGrade);
             }
 
-            /* ⑪ 지급 결과 반환 — 호출자가 API 응답에 포함할 수 있도록 */
-            return RewardResult.of(amount, policy.getActivityName());
+            /* ⑪ 지급 결과 반환 — 본인 금액 + 모든 자식/승격 보너스를 단일 RewardResult 에 합쳐 호출자에게 전달.
+             *    호출자(AttendanceService 등)는 result.totalPoints() 로 총 적립 포인트를,
+             *    result.bonuses() 로 마일스톤/승격 내역을 UI 에 노출한다. */
+            return RewardResult.of(amount, policy.getActivityName(), actionType, bonusResults);
 
         } catch (BusinessException be) {
             /* 도메인 예외(POINT_NOT_FOUND 등)는 rethrow — 본 기능과 함께 롤백시켜 데이터 정합성 보존.
@@ -315,8 +331,9 @@ public class RewardService {
                 progress.incrementTotalCount();
                 progress.incrementDailyCount();
                 progress.updateLastActionAt();
-                checkThresholdRewards(userId, actionType, progress);
-                return RewardResult.EMPTY;
+                /* 2026-05-11: 자식 보너스는 본 정책 지급 여부와 무관하게 호출자에 전달 */
+                List<RewardResult> bonusOnly = checkThresholdRewards(userId, actionType, progress);
+                return RewardResult.of(0, policy.getActivityName(), actionType, bonusOnly);
             }
 
             /* ⑥ 외부 지정 amount 사용 (policy.pointsAmount 무시)
@@ -345,11 +362,11 @@ public class RewardService {
                 progress.incrementRewardedTotalCount();
             }
 
-            /* ⑧ threshold 달성 연쇄 확인 */
-            checkThresholdRewards(userId, actionType, progress);
+            /* ⑧ threshold 달성 연쇄 확인 + 자식 보너스 수집 (2026-05-11) */
+            List<RewardResult> bonusResults = checkThresholdRewards(userId, actionType, progress);
 
-            /* ⑨ 지급 결과 반환 */
-            return RewardResult.of(amount, policy.getActivityName());
+            /* ⑨ 지급 결과 반환 — 본인 + 자식 보너스 합산 */
+            return RewardResult.of(amount, policy.getActivityName(), actionType, bonusResults);
 
         } catch (BusinessException be) {
             /* 도메인 예외는 rethrow — 본 기능과 함께 롤백 (REQUIRED 전파) */
@@ -523,10 +540,17 @@ public class RewardService {
     }
 
     /**
-     * threshold 기반 달성 정책을 순차적으로 확인하고 달성 시 보너스를 지급한다.
+     * threshold 기반 달성 정책을 순차적으로 확인하고 달성 시 보너스를 지급한 뒤
+     * 지급 결과 목록을 반환한다.
      *
      * <p>{@code parent_action_type = actionType}인 모든 활성 달성 정책을 조회하여
      * 각각의 threshold_target에 따라 달성 여부를 판정한다.</p>
+     *
+     * <h4>2026-05-11 시그니처 변경 — void → List&lt;RewardResult&gt;</h4>
+     * <p>출석 마일스톤 보너스 합산 정합성을 위해 자식 정책 지급 결과를 호출자에 반환한다.
+     * 호출자({@code grantReward})는 이 결과를 {@code RewardResult.bonuses} 에 합쳐 단일
+     * 응답으로 노출한다. 미달성·미지급 정책은 결과에 포함하지 않아 노이즈를 줄인다
+     * ({@code earned() == true} 인 것만 포함).</p>
      *
      * <h4>threshold_target별 판정 로직</h4>
      * <ul>
@@ -547,18 +571,21 @@ public class RewardService {
      * @param userId      사용자 ID
      * @param actionType  방금 발생한 활동 유형 코드 (부모 활동)
      * @param progress    현재 사용자의 활동 진행률 (카운터 갱신 완료 상태)
+     * @return 실제로 지급된 자식 보너스 결과 목록 (없으면 빈 리스트, 절대 null 아님)
      */
-    private void checkThresholdRewards(String userId, String actionType, UserActivityProgress progress) {
+    private List<RewardResult> checkThresholdRewards(String userId, String actionType, UserActivityProgress progress) {
         /* parent_action_type = actionType인 달성 정책 목록 조회
          * 달성 정책 자체는 parent=NULL이므로 재귀 호출 시 이 목록이 빈 리스트 → 종료 */
         List<RewardPolicy> thresholdPolicies =
                 rewardPolicyRepository.findByParentActionTypeAndIsActiveTrue(actionType);
 
         if (thresholdPolicies.isEmpty()) {
-            return;
+            return List.of();
         }
 
         LocalDate today = LocalDate.now();
+        /* 자식 보너스 지급 결과 수집 — 실제 지급된 것만 (EMPTY 제외) */
+        List<RewardResult> bonusResults = new ArrayList<>();
 
         for (RewardPolicy thresholdPolicy : thresholdPolicies) {
             /* threshold_target이 없거나 threshold_count가 0이면 일반 활동 → 스킵 */
@@ -609,11 +636,17 @@ public class RewardService {
             if (achieved && refId != null) {
                 log.debug("threshold 달성 → 보너스 지급 시도: userId={}, thresholdActionType={}, refId={}",
                         userId, thresholdPolicy.getActionType(), refId);
-                /* 달성 보너스 지급 — REQUIRES_NEW로 별도 트랜잭션에서 수행
+                /* 달성 보너스 지급 — 자식 정책의 parent=NULL 이므로 재귀 1단계에서 종료.
                  * contentLength=0: threshold 달성 보너스는 길이 검사 생략 */
-                grantReward(userId, thresholdPolicy.getActionType(), refId, 0);
+                RewardResult bonusResult = grantReward(userId, thresholdPolicy.getActionType(), refId, 0);
+                /* 실제 지급된 것만 결과에 포함 (canGrant() 미충족·dailyEarnCap 초과 등은 제외) */
+                if (bonusResult != null && bonusResult.earned()) {
+                    bonusResults.add(bonusResult);
+                }
             }
         }
+
+        return bonusResults;
     }
 
     /**
