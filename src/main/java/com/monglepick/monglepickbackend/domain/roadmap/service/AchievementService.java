@@ -25,6 +25,7 @@ import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -303,10 +304,19 @@ public class AchievementService {
      * @return 업적 유형별 달성 여부 + 진행률이 포함된 응답 DTO 목록
      * @throws BusinessException {@link ErrorCode#USER_NOT_FOUND} 사용자가 존재하지 않는 경우
      */
-    @Transactional
+    /**
+     * 트랜잭션 없이 실행 (NOT_SUPPORTED).
+     *
+     * <p>이 메서드 내에서 DB 쿼리가 실패했을 때 @Transactional 세션이 rollback-only로
+     * 마킹되지 않도록 한다. rollback-only 세션에서 커밋을 시도하면 UnexpectedRollbackException
+     * → 500이 발생하는 근본 원인을 차단한다.
+     * 각 하위 쿼리(JPA, MyBatis)는 자체 트랜잭션으로 실행되며, 소급 달성은
+     * autoGrantIfEligibleInNewTransaction의 REQUIRES_NEW 트랜잭션으로 보장한다.</p>
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public List<AchievementResponse> getAchievementsWithProgress(String userId, @Nullable String category) {
 
-        // ① 카테고리 조건에 맞는 활성 업적 유형 목록 조회
+        // ① 카테고리 조건에 맞는 활성 업적 유형 목록 조회 (자체 트랜잭션)
         List<AchievementType> types;
         try {
             if (isAllCategory(category)) {
@@ -317,16 +327,19 @@ public class AchievementService {
                 log.debug("업적 유형 카테고리 조회: category={}, {}건", category, types.size());
             }
         } catch (Exception e) {
-            log.error("업적 유형 목록 조회 실패 (빈 목록 반환): category={}, error={}", category, e.getMessage(), e);
+            log.error("업적 유형 목록 조회 실패 (빈 목록 반환): category={}, error={}",
+                    category, e.getMessage(), e);
             return Collections.emptyList();
         }
 
-        // ② 사용자의 달성 이력 → achievementTypeId 맵 (최신 기록 우선)
+        // ② 사용자의 달성 이력 조회 — JOIN FETCH로 achievementType 즉시 로딩
+        //    NOT_SUPPORTED 환경에서 LAZY 로딩을 방지하기 위해 findAllByUserIdWithType 사용
         List<UserAchievement> userAchievements;
         try {
-            userAchievements = userAchievementRepo.findAllByUserId(userId);
+            userAchievements = userAchievementRepo.findAllByUserIdWithType(userId);
         } catch (Exception e) {
-            log.error("사용자 업적 달성 이력 조회 실패 (미달성으로 처리): userId={}, error={}", userId, e.getMessage(), e);
+            log.error("사용자 업적 달성 이력 조회 실패 (미달성으로 처리): userId={}, error={}",
+                    userId, e.getMessage(), e);
             userAchievements = Collections.emptyList();
         }
         Map<Long, UserAchievement> achievedMap = new LinkedHashMap<>();
