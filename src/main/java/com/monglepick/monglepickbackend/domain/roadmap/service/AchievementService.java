@@ -31,6 +31,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -307,16 +308,27 @@ public class AchievementService {
 
         // ① 카테고리 조건에 맞는 활성 업적 유형 목록 조회
         List<AchievementType> types;
-        if (isAllCategory(category)) {
-            types = achievementTypeRepo.findByIsActiveTrue();
-            log.debug("업적 유형 전체 조회: {}건", types.size());
-        } else {
-            types = achievementTypeRepo.findByCategoryAndIsActiveTrue(category);
-            log.debug("업적 유형 카테고리 조회: category={}, {}건", category, types.size());
+        try {
+            if (isAllCategory(category)) {
+                types = achievementTypeRepo.findByIsActiveTrue();
+                log.debug("업적 유형 전체 조회: {}건", types.size());
+            } else {
+                types = achievementTypeRepo.findByCategoryAndIsActiveTrue(category);
+                log.debug("업적 유형 카테고리 조회: category={}, {}건", category, types.size());
+            }
+        } catch (Exception e) {
+            log.error("업적 유형 목록 조회 실패 (빈 목록 반환): category={}, error={}", category, e.getMessage(), e);
+            return Collections.emptyList();
         }
 
         // ② 사용자의 달성 이력 → achievementTypeId 맵 (최신 기록 우선)
-        List<UserAchievement> userAchievements = userAchievementRepo.findAllByUserId(userId);
+        List<UserAchievement> userAchievements;
+        try {
+            userAchievements = userAchievementRepo.findAllByUserId(userId);
+        } catch (Exception e) {
+            log.error("사용자 업적 달성 이력 조회 실패 (미달성으로 처리): userId={}, error={}", userId, e.getMessage(), e);
+            userAchievements = Collections.emptyList();
+        }
         Map<Long, UserAchievement> achievedMap = new LinkedHashMap<>();
         for (UserAchievement ua : userAchievements) {
             Long achievedTypeId = resolveAchievementTypeIdSafely(userId, ua);
@@ -582,20 +594,29 @@ public class AchievementService {
     ) {}
 
     /**
-     * 소급 달성 처리 — 이미 조건을 충족했지만 아직 UserAchievement가 없는 경우 INSERT + 리워드 지급.
+     * 소급 달성 처리 — REQUIRES_NEW 트랜잭션에서 실행하여 목록 조회 트랜잭션과 격리한다.
      *
-     * @return 달성 처리된 시각 (이미 달성 기록이 있거나 INSERT 성공 시), 실패 시 null
+     * <p>외부 트랜잭션의 AchievementType 엔티티는 REQUIRES_NEW 내에서 detached 상태가 되므로,
+     * typeId로 재조회하여 현재 트랜잭션에서 관리되는 엔티티를 사용한다.</p>
+     *
+     * @return 신규 달성 시각, 이미 달성이었거나 실패 시 null
      */
     private LocalDateTime autoGrantIfEligibleInNewTransaction(String userId, AchievementType type) {
+        Long typeId = type.getAchievementTypeId();
+        String typeCode = type.getAchievementCode();
         TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
         transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        return transactionTemplate.execute(status -> autoGrantIfEligible(userId, type));
-    }
-
-    private LocalDateTime autoGrantIfEligible(String userId, AchievementType type) {
-        return grantIfEligible(userId, type, "default")
-                .map(ignored -> LocalDateTime.now())
-                .orElseGet(LocalDateTime::now);
+        return transactionTemplate.execute(status -> {
+            // REQUIRES_NEW 내에서 엔티티를 재조회하여 detached entity 문제 방지
+            AchievementType freshType = achievementTypeRepo.findById(typeId).orElse(null);
+            if (freshType == null) {
+                log.warn("소급 달성 처리 중 업적 유형 재조회 실패: typeId={}, code={}", typeId, typeCode);
+                return null;
+            }
+            return grantIfEligible(userId, freshType, "default")
+                    .map(ignored -> LocalDateTime.now())
+                    .orElse(null); // 이미 달성된 경우 null → achieved = false 유지
+        });
     }
 
     private Optional<UnlockedAchievementResponse> grantIfEligible(String userId, AchievementType type, String achievementKey) {
