@@ -41,6 +41,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.security.Principal;
+import java.time.DateTimeException;
+import java.time.YearMonth;
 import java.util.List;
 
 /**
@@ -344,20 +346,54 @@ public class PointController extends BaseController {
     /**
      * 출석 현황 조회 (클라이언트 전용).
      *
-     * <p>사용자의 현재 연속 출석일, 총 출석일, 오늘 출석 여부,
-     * 이번 달 출석 날짜 목록을 조회한다.</p>
+     * <p>사용자의 현재 연속 출석일, 총 출석일, 오늘 출석 여부와 함께 대상 달의 출석 날짜 목록을
+     * 조회한다. {@code year/month} 파라미터를 지정하면 그 달의 monthlyDates 를, 둘 다 생략하면
+     * 현재 달의 monthlyDates 를 반환한다. 통계(currentStreak/totalDays/checkedToday) 는 조회
+     * 대상 달과 무관하게 항상 사용자의 현재 상태를 반환한다.</p>
      *
-     * @return 200 OK + AttendanceStatusResponse (연속일수, 총일수, 오늘출석여부, 월간날짜목록)
+     * <h4>2026-05-11 — year/month 파라미터 신설 (이전달 조회 지원)</h4>
+     * <p>달력 UI 에서 이전 달로 이동했을 때 그 달의 출석 도장을 표시하기 위한 신규 파라미터.
+     * 둘 다 함께 지정해야 하며, 한쪽만 지정하거나 미래 달을 지정하면 400 BAD_REQUEST.</p>
+     *
+     * @param year  조회 대상 연도 (선택, month 와 함께 지정)
+     * @param month 조회 대상 월 1~12 (선택, year 와 함께 지정)
+     * @return 200 OK + AttendanceStatusResponse (연속일수, 총일수, 오늘출석여부, 대상달 날짜목록, "YYYY-MM")
      */
-    @Operation(summary = "출석 현황 조회", description = "연속 출석일, 총 출석일, 오늘 출석 여부, 월간 출석 날짜")
-    @ApiResponse(responseCode = "200", description = "현황 조회 성공")
+    @Operation(summary = "출석 현황 조회",
+            description = "연속 출석일, 총 출석일, 오늘 출석 여부, 대상 달의 출석 날짜 (year/month 미지정 시 현재 달)")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "현황 조회 성공"),
+            @ApiResponse(responseCode = "400", description = "year/month 파라미터 부정합 또는 미래 달")
+    })
     @SecurityRequirement(name = "BearerAuth")
     @GetMapping("/attendance/status")
-    public ResponseEntity<AttendanceStatusResponse> getAttendanceStatus(Principal principal) {
+    public ResponseEntity<AttendanceStatusResponse> getAttendanceStatus(
+            Principal principal,
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month) {
         String userId = resolveUserIdWithServiceKey(principal, null);
-        log.debug("GET /api/v1/point/attendance/status — userId={}", userId);
+        log.debug("GET /api/v1/point/attendance/status — userId={}, year={}, month={}", userId, year, month);
 
-        AttendanceStatusResponse response = attendanceService.getStatus(userId);
+        /* 파라미터 검증
+         * - 둘 다 null  → 현재 달 (target=null 로 서비스에 위임)
+         * - 둘 중 하나만 → 명백한 클라이언트 오류 → 400 INVALID_INPUT
+         * - 둘 다 지정    → YearMonth.of() 가 month 범위(1~12) 검증 (벗어나면 DateTimeException → 400) */
+        YearMonth target = null;
+        if (year != null || month != null) {
+            if (year == null || month == null) {
+                throw new com.monglepick.monglepickbackend.global.exception.BusinessException(
+                        com.monglepick.monglepickbackend.global.exception.ErrorCode.INVALID_INPUT);
+            }
+            try {
+                target = YearMonth.of(year, month);
+            } catch (DateTimeException e) {
+                log.warn("YearMonth 생성 실패: year={}, month={}, error={}", year, month, e.getMessage());
+                throw new com.monglepick.monglepickbackend.global.exception.BusinessException(
+                        com.monglepick.monglepickbackend.global.exception.ErrorCode.INVALID_INPUT);
+            }
+        }
+
+        AttendanceStatusResponse response = attendanceService.getStatus(userId, target);
         return ResponseEntity.ok(response);
     }
 
