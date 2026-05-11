@@ -423,6 +423,14 @@ public class SecurityConfig {
                  */
 
                 /*
+                 * Solar API 사용 로그 적재 — Agent 전용 ServiceKey 인증 (2026-05-11).
+                 * AI Agent 가 LangChain 콜백에서 fire-and-forget 으로 1건씩 INSERT.
+                 * /api/v1/admin/** 의 ADMIN role 가드보다 먼저 매칭되어야 하므로
+                 * 위에 명시한다.
+                 */
+                .requestMatchers(HttpMethod.POST, "/api/v1/admin/stats/solar-usage/log").hasRole("SERVICE")
+
+                /*
                  * 관리자 API — ADMIN role 전용 (2026-04-23, Step 2A).
                  *
                  * 이전에는 .anyRequest().authenticated() 만 있어 JWT 존재 여부만 확인했다.
