@@ -3,6 +3,8 @@ package com.monglepick.monglepickbackend.domain.roadmap.repository;
 import com.monglepick.monglepickbackend.domain.roadmap.entity.AchievementType;
 import com.monglepick.monglepickbackend.domain.roadmap.entity.UserAchievement;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -28,6 +30,20 @@ public interface UserAchievementRepository extends JpaRepository<UserAchievement
      * @return 해당 사용자의 업적 달성 기록 리스트
      */
     List<UserAchievement> findAllByUserId(String userId);
+
+    /**
+     * 사용자 업적 달성 기록을 achievementType을 즉시 로딩(JOIN FETCH)하여 조회한다.
+     *
+     * <p>트랜잭션 밖에서 achievementType LAZY 로딩을 시도하면
+     * {@code LazyInitializationException}이 발생하므로, 업적 목록 조회 API에서는
+     * 이 메서드를 사용하여 achievementType을 즉시 로딩한다.
+     * achievement_type_id가 NULL인 레거시 레코드도 포함하기 위해 LEFT JOIN FETCH 사용.</p>
+     *
+     * @param userId 조회할 사용자 ID (VARCHAR(50))
+     * @return achievementType이 즉시 로딩된 업적 달성 기록 리스트
+     */
+    @Query("SELECT ua FROM RoadmapUserAchievement ua LEFT JOIN FETCH ua.achievementType WHERE ua.userId = :userId")
+    List<UserAchievement> findAllByUserIdWithType(@Param("userId") String userId);
 
     /**
      * 특정 사용자 + 업적 유형 + 업적 키 조합으로 단건 조회한다.
